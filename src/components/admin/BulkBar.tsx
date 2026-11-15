@@ -2,23 +2,37 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
+const formChecks = (form: HTMLFormElement) => Array.from(form.elements).filter((el): el is HTMLInputElement => el instanceof HTMLInputElement && el.type === "checkbox");
+
+const ORDER_OPTIONS: [string, string][] = [
+  ["CONFIRMED", "Mark Confirmed"],
+  ["PROCESSING", "Mark Processing"],
+  ["SHIPPED", "Mark Shipped"],
+  ["DELIVERED", "Mark Delivered"],
+  ["CANCELLED", "Mark Cancelled"],
+  ["RETURNED", "Mark Returned"],
+  ["steadfast", "🚚 Send to Steadfast"],
+  ["print", "🖨 Print invoices"],
+];
+
 /** Floating action bar — appears when rows (.row-check) in the parent form are selected */
-export default function BulkBar() {
+export default function BulkBar({ options = ORDER_OPTIONS }: { options?: [string, string][] }) {
   const ref = useRef<HTMLDivElement>(null);
   const [n, setN] = useState(0);
 
   useEffect(() => {
     const form = ref.current?.closest("form");
     if (!form) return;
+    // form.elements also covers checkboxes placed outside the form via form="<id>"
     // setTimeout: the "select all" checkbox updates the rows after this listener runs
-    const count = () => setTimeout(() => setN(form.querySelectorAll<HTMLInputElement>(".row-check:checked").length));
-    form.addEventListener("change", count);
-    return () => form.removeEventListener("change", count);
+    const count = () => setTimeout(() => setN(formChecks(form).filter((c) => c.classList.contains("row-check") && c.checked).length));
+    document.addEventListener("change", count);
+    return () => document.removeEventListener("change", count);
   }, []);
 
   const clear = () => {
     const form = ref.current?.closest("form");
-    form?.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((c) => (c.checked = false));
+    if (form) formChecks(form).forEach((c) => (c.checked = false));
     setN(0);
   };
 
@@ -28,14 +42,9 @@ export default function BulkBar() {
         <span className="text-sm font-semibold">{n} selected</span>
         <select name="bulk" required className="a-input !w-auto !py-1.5">
           <option value="">— choose action —</option>
-          <option value="CONFIRMED">Mark Confirmed</option>
-          <option value="PROCESSING">Mark Processing</option>
-          <option value="SHIPPED">Mark Shipped</option>
-          <option value="DELIVERED">Mark Delivered</option>
-          <option value="CANCELLED">Mark Cancelled</option>
-          <option value="RETURNED">Mark Returned</option>
-          <option value="steadfast">🚚 Send to Steadfast</option>
-          <option value="print">🖨 Print invoices</option>
+          {options.map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
         </select>
         <button className="a-btn !py-1.5">Apply</button>
         <button type="button" onClick={clear} className="grid size-8 place-items-center rounded-lg text-zinc-400 hover:bg-zinc-100" aria-label="Clear selection">

@@ -61,11 +61,13 @@ export async function saveSetting<K extends Key>(key: K, value: AllSettings[K]) 
 }
 
 /** Public tracking config only (no tokens) — safe to send to the browser */
-export async function getPublicTracking() {
+/** Browser tracking config for one source: "shop" | landing slug | "page:<slug>" (see lib/pixels.ts) */
+export async function getPublicTracking(source = "shop") {
   const t = await getSetting("tracking");
+  const { pixelIdsFor } = await import("./pixels");
   return {
     fbBrowser: t.browserEnabled,
-    fbPixelIds: t.browserEnabled ? t.pixels.map((p) => p.id).filter(Boolean) : [],
+    fbPixelIds: t.browserEnabled ? await pixelIdsFor(source, t) : [],
     // events the browser pixel may fire (Purchase only when reported at order time)
     fbEvents: Object.entries(t.events)
       .filter(([k, on]) => on && !SERVER_ONLY_EVENTS.includes(k) && (k !== "Purchase" || t.purchaseTrigger === "placed"))

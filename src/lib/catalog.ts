@@ -20,6 +20,10 @@ export const productSelect = {
   comboPrice: true,
   addonNote: true,
   categoryId: true,
+  seoTitle: true,
+  seoDesc: true,
+  imageAlt: true,
+  updatedAt: true,
 } as const;
 
 /** Cached catalog reads — cleared by revalidateTag("catalog") when admin edits products. */

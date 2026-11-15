@@ -5,8 +5,10 @@ import { BadgeCheck, ChevronRight, Leaf, ShieldCheck, Truck } from "lucide-react
 import ViewContent from "@/components/tracking/ViewContent";
 import ProductCard from "@/components/shop/ProductCard";
 import { BuyBox, Gallery } from "@/components/shop/ProductBuy";
-import { getActiveProducts, getProductBySlug } from "@/lib/catalog";
+import { getActiveProducts, getCategories, getProductBySlug } from "@/lib/catalog";
+import { ancestry, descendantIds } from "@/lib/category-tree";
 import { taka } from "@/lib/utils";
+import { JsonLd, abs, breadcrumbLd, excerpt } from "@/lib/seo";
 
 export const revalidate = 3600;
 type Props = { params: Promise<{ slug: string }> };
@@ -14,31 +16,83 @@ type Props = { params: Promise<{ slug: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const p = await getProductBySlug((await params).slug);
   if (!p) return {};
-  return { title: p.nameBn || p.name, description: p.tagline || undefined, openGraph: { images: [p.image] } };
+  const title = p.seoTitle || p.nameBn || p.name;
+  const description = p.seoDesc || p.tagline || excerpt(p.description) || undefined;
+  const images = [{ url: p.image, alt: p.imageAlt || p.nameBn || p.name }];
+  return {
+    // a custom SEO title is used as-is; otherwise the layout template adds " | Qura Food"
+    title: p.seoTitle ? { absolute: p.seoTitle } : title,
+    description,
+    alternates: { canonical: `/p/${p.slug}` },
+    openGraph: { type: "website", url: `/p/${p.slug}`, title, description, images },
+    twitter: { card: "summary_large_image", title, description, images: [p.image] },
+  };
+}
+
+function productLd(p: NonNullable<Awaited<ReturnType<typeof getProductBySlug>>>, categoryPath?: string) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: p.nameBn || p.name,
+    alternateName: p.nameBn ? p.name : undefined,
+    description: p.seoDesc || p.tagline || excerpt(p.description, 300),
+    image: [p.image, ...p.gallery].map(abs),
+    sku: p.slug,
+    url: abs(`/p/${p.slug}`),
+    brand: { "@type": "Brand", name: "Qura Food" },
+    category: categoryPath || p.category?.name,
+    weight: p.weight || undefined,
+    offers: {
+      "@type": "Offer",
+      url: abs(`/p/${p.slug}`),
+      price: p.price,
+      priceCurrency: "BDT",
+      availability: p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      itemCondition: "https://schema.org/NewCondition",
+      priceValidUntil: new Date(Date.now() + 365 * 86400_000).toISOString().slice(0, 10),
+      seller: { "@type": "Organization", name: "Qura Food" },
+    },
+  };
 }
 
 export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
   const p = await getProductBySlug(slug);
   if (!p) notFound();
-  const all = await getActiveProducts();
+  const [all, categories] = await Promise.all([getActiveProducts(), getCategories()]);
   const addons = all.filter((x) => x.isAddon && x.id !== p.id);
-  const related = all.filter((x) => x.id !== p.id && (x.categoryId === p.categoryId || !p.categoryId)).slice(0, 4);
+  // related: same category first, then the rest of the same top-level family
+  const path = ancestry(categories, p.categoryId);
+  const family = path[0] ? descendantIds(categories, path[0].id) : null;
+  const others = all.filter((x) => x.id !== p.id && !x.isAddon);
+  const related = [...others.filter((x) => x.categoryId === p.categoryId), ...others.filter((x) => x.categoryId !== p.categoryId && (!family || (x.categoryId && family.has(x.categoryId))))].slice(0, 4);
   const off = p.comparePrice ? p.comparePrice - p.price : 0;
+  const crumbs: [string, string][] = path.length ? path.map((c) => [c.nameBn || c.name, `/category/${c.slug}`]) : [["শপ", "/shop"]];
 
   return (
     <>
+      <JsonLd data={[productLd(p, path.map((c) => c.name).join(" > ")), breadcrumbLd([["হোম", "/"], ...crumbs, [p.nameBn || p.name, `/p/${p.slug}`]])]} />
       <ViewContent id={p.id} name={p.name} value={p.price} />
       <section className="container-x py-6 sm:py-10">
-        <nav className="mb-5 flex items-center gap-1 text-sm text-brand-900/50">
-          <Link href="/">হোম</Link>
+        <nav aria-label="Breadcrumb" className="mb-5 flex flex-wrap items-center gap-1 text-sm text-brand-900/50">
+          <Link href="/" className="hover:text-brand-800">
+            হোম
+          </Link>
+          {crumbs.map(([label, href]) => (
+            <span key={href} className="flex items-center gap-1">
+              <ChevronRight className="size-3.5" />
+              <Link href={href} className="hover:text-brand-800">
+                {label}
+              </Link>
+            </span>
+          ))}
           <ChevronRight className="size-3.5" />
-          {p.category ? <Link href={`/category/${p.category.slug}`}>{p.category.nameBn || p.category.name}</Link> : <Link href="/shop">শপ</Link>}
-          <ChevronRight className="size-3.5" />
-          <span className="line-clamp-1 text-brand-900/80">{p.nameBn || p.name}</span>
+          <span aria-current="page" className="line-clamp-1 text-brand-900/80">
+            {p.nameBn || p.name}
+          </span>
         </nav>
         <div className="grid gap-8 lg:grid-cols-2 lg:gap-12">
-          <Gallery images={[p.image, ...p.gallery]} alt={p.name} />
+          <Gallery images={[p.image, ...p.gallery]} alt={p.imageAlt || p.nameBn || p.name} />
           <div>
             <span className="eyebrow">
               <Leaf className="size-4" /> ১০০% প্রাকৃতিক

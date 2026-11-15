@@ -1,35 +1,48 @@
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/session";
-import UserForm from "@/components/admin/UserForm";
-import { cn } from "@/lib/utils";
+import UsersManager, { type UserRow, type LoginRow } from "@/components/admin/UsersManager";
 
 export default async function UsersPage() {
   const me = await requireAdmin("system");
-  const users = await db.admin.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, name: true, email: true, role: true, permissions: true, active: true, lastLoginAt: true } });
-  return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold">Users & Roles</h1>
-        <p className="text-sm text-zinc-500">
-          <b>Admin</b> = everything · <b>Manager</b> = everything except system settings & users · <b>Staff</b> = only the sections you tick (e.g. Orders + Customers for call-center staff).
-        </p>
-      </div>
-      <UserForm />
-      <div className="grid gap-4 lg:grid-cols-2">
-        {users.map((u) => (
-          <div key={u.id} className="a-card space-y-3">
-            <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-full bg-brand-700 font-bold text-white">{u.name[0]}</span>
-              <div className="flex-1">
-                <p className="font-semibold">{u.name} {u.id === me.id && <span className="text-xs text-zinc-400">(you)</span>}</p>
-                <p className="text-xs text-zinc-500">{u.email} · last login {u.lastLoginAt ? u.lastLoginAt.toLocaleString("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short" }) : "never"}</p>
-              </div>
-              <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", u.active ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600")}>{u.active ? u.role : "Disabled"}</span>
-            </div>
-            <UserForm user={u} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  const since = new Date(Date.now() - 86400_000);
+  const [users, logins, failed24h, activity] = await Promise.all([
+    db.admin.findMany({
+      orderBy: [{ active: "desc" }, { createdAt: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        note: true,
+        role: true,
+        permissions: true,
+        active: true,
+        lastLoginAt: true,
+        lastLoginIp: true,
+        lastSeenAt: true,
+        lockedUntil: true,
+        failedLogins: true,
+        passwordChangedAt: true,
+        createdAt: true,
+      },
+    }),
+    db.loginEvent.findMany({ orderBy: { createdAt: "desc" }, take: 25, select: { id: true, email: true, ok: true, reason: true, ip: true, userAgent: true, createdAt: true, admin: { select: { name: true } } } }),
+    db.loginEvent.count({ where: { ok: false, createdAt: { gte: since } } }),
+    db.activityLog.groupBy({ by: ["adminId"], where: { createdAt: { gte: new Date(Date.now() - 30 * 86400_000) } }, _count: { _all: true } }),
+  ]);
+  const actions = new Map(activity.map((a) => [a.adminId, a._count._all]));
+  const iso = (d: Date | null) => d?.toISOString() ?? null;
+
+  const rows: UserRow[] = users.map((u) => ({
+    ...u,
+    lastLoginAt: iso(u.lastLoginAt),
+    lastSeenAt: iso(u.lastSeenAt),
+    lockedUntil: u.lockedUntil && u.lockedUntil > new Date() ? u.lockedUntil.toISOString() : null,
+    passwordChangedAt: iso(u.passwordChangedAt),
+    createdAt: u.createdAt.toISOString(),
+    actions30d: actions.get(u.id) ?? 0,
+  }));
+  const loginRows: LoginRow[] = logins.map((l) => ({ ...l, name: l.admin?.name ?? null, createdAt: l.createdAt.toISOString() }));
+
+  return <UsersManager users={rows} logins={loginRows} failed24h={failed24h} meId={me.id} />;
 }

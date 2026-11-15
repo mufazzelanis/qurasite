@@ -21,7 +21,11 @@ export type DeliverySettings = {
   freeDeliveryOver: number; // 0 = disabled
 };
 
-export type FbPixel = { id: string; label: string; token: string }; // token is secret — never sent to the browser
+/** token is secret — never sent to the browser. site=false → library-only pixel (used by landing pages / pages that pick it, not the main site) */
+export type FbPixel = { id: string; label: string; token: string; site?: boolean };
+
+/** How a landing page / content page chooses Facebook pixels */
+export type PixelMode = "site" | "own" | "none";
 
 /** Events that can be switched on/off (browser + server). OrderDelivered/OrderCancelled are server-only. */
 export const FB_EVENTS = [
@@ -166,6 +170,22 @@ export type ThankYouSettings = {
   guides: ThankYouGuide[]; // icon: book | spoon | leaf | heart | truck | shield | phone | star | gift
 };
 
+export type SeoSettings = {
+  /** Homepage <title> (50–60 characters is ideal) */
+  title: string;
+  /** Homepage meta description (120–160 characters) */
+  description: string;
+  keywords: string;
+  /** Default social share image (1200×630) */
+  ogImage: string;
+  /** Appended to every page title: "Product | Qura Food" */
+  titleSuffix: string;
+  googleVerification: string;
+  bingVerification: string;
+  /** false = ask search engines not to index the site (staging) */
+  indexable: boolean;
+};
+
 export type AllSettings = {
   site: SiteSettings;
   delivery: DeliverySettings;
@@ -180,6 +200,7 @@ export type AllSettings = {
   invoice: InvoiceSettings;
   courier: CourierSettings;
   thankYou: ThankYouSettings;
+  seo: SeoSettings;
 };
 
 /** Per landing page content (stored in LandingPage.content) */
@@ -359,10 +380,20 @@ export const DEFAULT_SETTINGS: AllSettings = {
     codNote: "পণ্য হাতে পেয়ে ডেলিভারি ম্যানকে টাকা দিন (ক্যাশ অন ডেলিভারি)।",
     guidesTitle: "পণ্য হাতে পাওয়ার আগেই জেনে নিন",
     guides: [
-      { icon: "spoon", title: "ব্যবহারবিধি", subtitle: "সকাল, রাত ও বিশেষ ব্যবহারের সঠিক নিয়ম", href: "/guide/how-to-use" },
+      { icon: "spoon", title: "ব্যবহারবিধি", subtitle: "সকাল, রাত ও বিশেষ ব্যবহারের সঠিক নিয়ম", href: "/how-to-use" },
       { icon: "truck", title: "অর্ডার ট্র্যাক করুন", subtitle: "আপনার পার্সেল এখন কোথায় দেখুন", href: "/track" },
-      { icon: "shield", title: "রিটার্ন ও রিফান্ড পলিসি", subtitle: "পণ্যে সমস্যা হলে কী করবেন", href: "/guide/refund-policy" },
+      { icon: "shield", title: "রিটার্ন ও রিফান্ড পলিসি", subtitle: "পণ্যে সমস্যা হলে কী করবেন", href: "/refund-policy" },
     ],
+  },
+  seo: {
+    title: "কুঁড়া ফুড | Qura Food — Nature in Every Spoon",
+    description: "Qura Food — চাল, বাদাম, ডাল, গম, ভুট্টা ও মটরের ১০০% প্রাকৃতিক পাউডার মিশ্রণ। কোনো প্রিজারভেটিভ নেই। সারা বাংলাদেশে ক্যাশ অন ডেলিভারি।",
+    keywords: "কুঁড়া, qura food, প্রাকৃতিক খাবার, healthy food bangladesh, মধু, আখের গুড়",
+    ogImage: "/brand/logo-card-t.png",
+    titleSuffix: "Qura Food",
+    googleVerification: "",
+    bingVerification: "",
+    indexable: true,
   },
 };
 

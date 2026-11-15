@@ -41,6 +41,34 @@ model Admin {
   active      Boolean   @default(true)
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
+  phone       String?
+  /// Private note about this user (shift, branch…)
+  note        String?
+  lastLoginIp String?
+  /// Updated (throttled) on every admin request → "online now"
+  lastSeenAt  DateTime?
+  /// Bumped to sign the user out of every device (stored in the session token)
+  sessionVersion Int    @default(0)
+  failedLogins   Int    @default(0)
+  lockedUntil    DateTime?
+  passwordChangedAt DateTime?
+  logins      LoginEvent[]
+}
+
+/// Every admin sign-in attempt (success or failure)
+model LoginEvent {
+  id        String   @id @default(cuid())
+  adminId   String?
+  admin     Admin?   @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  email     String
+  ok        Boolean
+  reason    String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([adminId])
 }
 
 model ActivityLog {
@@ -63,9 +91,21 @@ model Category {
   nameBn    String?
   slug      String    @unique
   image     String?
+  /// Intro text shown on the category page (also used as meta description fallback)
+  description String?
+  seoTitle    String?
+  seoDesc     String?
   sortOrder Int       @default(0)
   active    Boolean   @default(true)
+  /// Show as a tile on the homepage
+  featured  Boolean   @default(false)
+  /// Parent category (null = top level). Unlimited depth.
+  parentId  String?
+  parent    Category? @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Category[] @relation("CategoryTree")
   products  Product[]
+
+  @@index([parentId])
 }
 
 model Product {
@@ -89,6 +129,11 @@ model Product {
   comboPrice   Int?
   /// Short persuasive line shown in the combo offer
   addonNote    String?
+  /// SEO overrides (fallback: name / tagline)
+  seoTitle     String?
+  seoDesc      String?
+  /// Alt text of the main image (accessibility + Google Images)
+  imageAlt     String?
   sortOrder    Int         @default(0)
   categoryId   String?
   category     Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -108,14 +153,45 @@ model LandingPage {
   addonIds  String[] // combo add-ons (honey, jaggery…)
   /// LandingContent JSON (hero, sections, texts, combo, colors…)
   content   Json
-  pixelId   String? // optional: own Facebook Pixel for this page
+  /// @deprecated — replaced by pixelMode + pixelIds (migrated)
+  pixelId   String?
+  /// site = same pixels as the main site · own = only pixelIds · none = no Facebook pixel
+  pixelMode String   @default("site")
+  pixelIds  String[]
   seoTitle  String?
   seoDesc   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-/// Simple content pages: /guide/<slug> (privacy, refund, how-to…)
+/// Content pages built from blocks, served at /<slug> (about, contact, policies, FAQ…)
+model Page {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  title      String
+  /// Short intro under the title (also the meta description fallback)
+  excerpt    String?
+  /// PageBlock[] — see src/lib/page-blocks.ts
+  blocks     Json
+  coverImage String?
+  /// default (reading width) | wide
+  layout     String   @default("default")
+  /// none | header | footer — where the page is linked automatically
+  menu       String   @default("none")
+  sortOrder  Int      @default(0)
+  active     Boolean  @default(true)
+  seoTitle   String?
+  seoDesc    String?
+  ogImage    String?
+  noindex    Boolean  @default(false)
+  /// site = main site pixels · own = only pixelIds · none = no Facebook pixel
+  pixelMode  String   @default("site")
+  pixelIds   String[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/// @deprecated — old /guide/<slug> pages, copied into Page. Kept so no data is dropped.
 model GuidePage {
   id        String   @id @default(cuid())
   slug      String   @unique

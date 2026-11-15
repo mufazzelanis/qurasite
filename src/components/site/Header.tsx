@@ -3,22 +3,26 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Menu, Phone, Search, ShoppingBag, X } from "lucide-react";
+import { ChevronDown, Menu, Phone, Search, ShoppingBag, X } from "lucide-react";
+import { buildTree, flatten, type Node } from "@/lib/category-tree";
 import SearchPalette from "./SearchPalette";
 import { useCart } from "@/components/shop/cart";
 import { cn } from "@/lib/utils";
 
-export default function Header({ phone, announcement, categories }: { phone: string; announcement: string; categories: { name: string; nameBn: string | null; slug: string }[] }) {
+type MenuCat = { id: string; name: string; nameBn: string | null; slug: string; parentId: string | null; sortOrder: number; image: string | null };
+
+export default function Header({ phone, announcement, categories, pages = [] }: { phone: string; announcement: string; categories: MenuCat[]; pages?: { slug: string; title: string }[] }) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState(false);
   const { count, setOpen: openCart, ready } = useCart();
   const path = usePathname();
+  const tree = buildTree(categories);
 
   const NAV = [
     { href: "/", label: "হোম" },
     { href: "/shop", label: "সব পণ্য" },
-    ...categories.slice(0, 3).map((c) => ({ href: `/category/${c.slug}`, label: c.nameBn || c.name })),
+    ...pages.map((p) => ({ href: `/${p.slug}`, label: p.title })),
     { href: "/track", label: "অর্ডার ট্র্যাক" },
   ];
 
@@ -61,6 +65,7 @@ export default function Header({ phone, announcement, categories }: { phone: str
           </Link>
 
           <nav className="hidden items-center gap-1 lg:flex">
+            {tree.length > 0 && <CategoryMega tree={tree} active={path.startsWith("/category/")} />}
             {NAV.map((n) => (
               <Link
                 key={n.href}
@@ -111,12 +116,20 @@ export default function Header({ phone, announcement, categories }: { phone: str
               <X className="size-5" />
             </button>
           </div>
-          <nav className="flex flex-col gap-1">
+          <nav className="-mx-2 flex flex-col gap-1 overflow-y-auto px-2">
             {NAV.map((n) => (
               <Link key={n.href} href={n.href} className="block rounded-xl px-4 py-3 text-lg font-medium hover:bg-white">
                 {n.label}
               </Link>
             ))}
+            {tree.length > 0 && (
+              <div className="mt-3 border-t border-brand-900/10 pt-3">
+                <p className="px-4 pb-1 text-xs font-bold tracking-wider text-brand-900/40 uppercase">ক্যাটাগরি</p>
+                {tree.map((n) => (
+                  <MobileCat key={n.id} n={n} />
+                ))}
+              </div>
+            )}
           </nav>
           <div className="mt-auto space-y-3">
             <button onClick={() => (setOpen(false), openCart(true))} className="btn-gold w-full">
@@ -131,5 +144,64 @@ export default function Header({ phone, announcement, categories }: { phone: str
 
       <SearchPalette open={search} onClose={() => setSearch(false)} />
     </>
+  );
+}
+
+/** Desktop: hover/focus dropdown with every top-level category and its subcategories */
+function CategoryMega({ tree, active }: { tree: Node<MenuCat>[]; active: boolean }) {
+  const label = (c: MenuCat) => c.nameBn || c.name;
+  return (
+    <div className="group/mega relative">
+      <Link
+        href="/shop"
+        aria-haspopup="true"
+        className={cn("flex items-center gap-1 rounded-full px-4 py-2 text-[15px] font-medium transition hover:text-brand-800", active ? "text-brand-800" : "text-brand-900/75")}
+      >
+        ক্যাটাগরি <ChevronDown className="size-4 transition group-hover/mega:rotate-180" />
+      </Link>
+      <div className="invisible absolute top-full left-1/2 z-50 w-max max-w-[min(90vw,760px)] -translate-x-1/2 translate-y-2 pt-3 opacity-0 transition duration-200 group-focus-within/mega:visible group-focus-within/mega:translate-y-0 group-focus-within/mega:opacity-100 group-hover/mega:visible group-hover/mega:translate-y-0 group-hover/mega:opacity-100">
+        <div className={cn("grid gap-2 rounded-3xl border border-brand-900/10 bg-white p-4 shadow-2xl shadow-brand-900/15", tree.length > 2 ? "grid-cols-3" : tree.length === 2 ? "grid-cols-2" : "grid-cols-1")}>
+          {tree.map((n) => (
+            <div key={n.id} className="min-w-52 rounded-2xl p-2 transition hover:bg-cream/70">
+              <Link href={`/category/${n.slug}`} className="flex items-center gap-3">
+                <span className="relative size-11 shrink-0 overflow-hidden rounded-xl bg-cream ring-1 ring-brand-900/5">{n.image && <Image src={n.image} alt="" fill sizes="44px" className="object-contain p-1" />}</span>
+                <span className="font-semibold text-brand-900 hover:text-brand-700">{label(n)}</span>
+              </Link>
+              {n.children.length > 0 && (
+                <ul className="mt-2 space-y-0.5 border-l-2 border-gold-200 pl-3">
+                  {flatten(n.children).map((c) => (
+                    <li key={c.id} style={{ paddingLeft: (c.depth - 1) * 12 }}>
+                      <Link href={`/category/${c.slug}`} className="block rounded-md px-1.5 py-1 text-sm text-brand-900/70 transition hover:bg-white hover:text-brand-800">
+                        {label(c)}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Mobile: expandable category tree */
+function MobileCat({ n }: { n: Node<MenuCat> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ paddingLeft: n.depth * 14 }}>
+      <div className="flex items-center">
+        <Link href={`/category/${n.slug}`} className="flex-1 rounded-xl px-4 py-2.5 font-medium hover:bg-white">
+          {n.nameBn || n.name}
+        </Link>
+        {n.children.length > 0 && (
+          <button onClick={() => setOpen((o) => !o)} className="grid size-10 place-items-center rounded-xl hover:bg-white" aria-label={open ? "Collapse" : "Expand"} aria-expanded={open}>
+            <ChevronDown className={cn("size-4 transition", open && "rotate-180")} />
+          </button>
+        )}
+      </div>
+      {open && n.children.map((c) => <MobileCat key={c.id} n={c} />)}
+    </div>
   );
 }

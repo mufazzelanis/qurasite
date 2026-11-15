@@ -27,9 +27,7 @@ export async function POST(req: Request) {
       data: { name: body.name, sessionId, path: safePath(body.url), value: Number(data.value) || null },
     });
     const slug = typeof body.slug === "string" ? body.slug.slice(0, 80) : undefined;
-    const pixelId = slug ? (await db.landingPage.findUnique({ where: { slug }, select: { pixelId: true } }))?.pixelId || undefined : undefined;
     await sendCapi({
-      pixelId,
       source: slug || "shop",
       eventName: body.name,
       eventId: String(body.eventId),

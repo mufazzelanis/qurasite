@@ -64,7 +64,7 @@ export default async function PixelPage({ searchParams }: { searchParams: Promis
   const W = Prisma.sql`WHERE ${Prisma.join(conds, " AND ")}`;
   const WB = Prisma.sql`WHERE ${Prisma.join(base, " AND ")}`;
 
-  const [day, week, byEvent, failedRetry, rows, total, topIps, meta, landings] = await Promise.all([
+  const [day, week, byEvent, failedRetry, rows, total, topIps, meta, landings, contentPages] = await Promise.all([
     db.capiLog.groupBy({ by: ["result"], where: { createdAt: { gte: new Date(Date.now() - DAY) }, isTest: false }, _count: true }),
     db.$queryRaw<{ d: string; sent: bigint; failed: bigint }[]>`
       SELECT to_char("createdAt" + interval '6 hours', 'YYYY-MM-DD') d,
@@ -78,7 +78,8 @@ export default async function PixelPage({ searchParams }: { searchParams: Promis
     db.$queryRaw<{ c: bigint }[]>`SELECT COUNT(*) c FROM "CapiLog" ${W}`,
     db.$queryRaw<{ ip: string; c: bigint }[]>`SELECT ip, COUNT(*) c FROM "CapiLog" ${WB} AND ip IS NOT NULL GROUP BY ip ORDER BY c DESC LIMIT 6`,
     db.$queryRaw<{ uniq: bigint; bots: bigint }[]>`SELECT COUNT(DISTINCT ip) FILTER (WHERE result <> 'bot') uniq, COUNT(*) FILTER (WHERE result = 'bot') bots FROM "CapiLog" ${WB}`,
-    db.landingPage.findMany({ where: { pixelId: { not: null } }, select: { slug: true, pixelId: true } }),
+    db.landingPage.findMany({ orderBy: { createdAt: "asc" }, select: { slug: true, title: true, active: true, pixelMode: true, pixelIds: true } }),
+    db.page.findMany({ orderBy: { sortOrder: "asc" }, select: { slug: true, title: true, active: true, pixelMode: true, pixelIds: true } }),
   ]);
 
   // ── summary ──
@@ -105,8 +106,15 @@ export default async function PixelPage({ searchParams }: { searchParams: Promis
     .sort((a, b) => b.all - a.all);
   const totalRows = n(total[0]?.c);
   const pages = Math.max(1, Math.ceil(totalRows / PER_PAGE));
-  const lpPixel = new Map(landings.map((l) => [l.pixelId!, l.slug]));
-  const pixelName = (id: string, label: string | null) => label || (lpPixel.has(id) ? `/${lpPixel.get(id)}` : t.pixels[0]?.id === id ? "Main site" : "Pixel");
+  const libName = (id: string) => t.pixels.find((p) => p.id === id)?.label || id;
+  const pixelName = (id: string, label: string | null) => label || libName(id);
+  // where each pixel fires: main site + every landing page + every content page
+  const siteIds = t.pixels.filter((p) => p.id && p.site !== false).map((p) => p.id);
+  const routes = [
+    { kind: "Main site", path: "/", title: "Home, shop, products, checkout", active: true, mode: "site", ids: siteIds },
+    ...landings.map((l) => ({ kind: "Landing", path: `/${l.slug}`, title: l.title, active: l.active, mode: l.pixelMode, ids: l.pixelMode === "own" ? l.pixelIds : l.pixelMode === "site" ? siteIds : [] })),
+    ...contentPages.map((p) => ({ kind: "Page", path: `/${p.slug}`, title: p.title, active: p.active, mode: p.pixelMode, ids: p.pixelMode === "own" ? p.pixelIds : p.pixelMode === "site" ? siteIds : [] })),
+  ];
 
   const qs = (o: Partial<Record<keyof F, string | undefined>>) =>
     "?" + new URLSearchParams(Object.entries({ ...f, ...o }).filter(([, v]) => v !== undefined && v !== "") as [string, string][]).toString();
@@ -163,7 +171,54 @@ export default async function PixelPage({ searchParams }: { searchParams: Promis
             </div>
           </div>
 
-          <PixelSettingsForm initial={{ ...t, pixels: t.pixels.map((p) => ({ id: p.id, label: p.label, tokenTail: p.token ? p.token.slice(-4) : "" })) }} />
+          <PixelSettingsForm initial={{ ...t, pixels: t.pixels.map((p) => ({ id: p.id, label: p.label, tokenTail: p.token ? p.token.slice(-4) : "", site: p.site !== false })) }} />
+
+          {/* where each pixel fires */}
+          <div className="a-card space-y-3">
+            <div>
+              <h2 className="font-semibold">Where each pixel fires</h2>
+              <p className="text-sm text-zinc-500">Browser pixel and Conversions API follow the same rule. Change a landing page or page in its own editor.</p>
+            </div>
+            <div className="-mx-5 overflow-x-auto">
+              <table className="w-full min-w-[620px] text-sm">
+                <thead className="border-y border-zinc-100 bg-zinc-50/70">
+                  <tr>
+                    <th className="a-th">Where</th>
+                    <th className="a-th">Setting</th>
+                    <th className="a-th">Facebook pixels</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {routes.map((r) => (
+                    <tr key={r.kind + r.path} className={cn(!r.active && "opacity-50")}>
+                      <td className="a-td">
+                        <span className={cn("mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase", r.kind === "Main site" ? "bg-brand-100 text-brand-800" : r.kind === "Landing" ? "bg-gold-100 text-gold-700" : "bg-sky-100 text-sky-700")}>{r.kind}</span>
+                        <a href={r.path} target="_blank" className="font-mono text-xs text-brand-700 hover:underline">
+                          {r.path}
+                        </a>
+                        <p className="mt-0.5 truncate text-xs text-zinc-400">{r.title}</p>
+                      </td>
+                      <td className="a-td text-xs">{r.kind === "Main site" ? "Pixels ticked “main site”" : r.mode === "own" ? "Own pixels" : r.mode === "none" ? "No pixel" : "Same as main site"}</td>
+                      <td className="a-td">
+                        {r.ids.length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {r.ids.map((id) => (
+                              <span key={id} title={id} className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium", t.pixels.some((p) => p.id === id) ? "bg-zinc-100 text-zinc-700" : "bg-amber-50 text-amber-700")}>
+                                {libName(id)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-zinc-400">— none —</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-zinc-400">Amber = pixel not in the library (uses the primary token for server events).</p>
+          </div>
         </div>
 
         {/* right column */}
@@ -290,7 +345,7 @@ export default async function PixelPage({ searchParams }: { searchParams: Promis
                     <p className="mt-1 max-w-44 truncate font-mono text-[10px] text-zinc-400" title={x.eventId}>{x.eventId}</p>
                   </td>
                   <td className="a-td">
-                    <p className="text-xs">{pixelName(x.pixelId, x.pixelLabel)}{x.source && x.source !== "shop" && !lpPixel.has(x.pixelId) && <span className="text-zinc-400"> · /{x.source}</span>}</p>
+                    <p className="text-xs">{pixelName(x.pixelId, x.pixelLabel)}{x.source && x.source !== "shop" && <span className="text-zinc-400"> · /{x.source.replace(/^page:/, "")}</span>}</p>
                     <p className="font-mono text-[10px] text-zinc-400">{x.pixelId}</p>
                   </td>
                   <td className="a-td text-xs">{x.orderNo && x.orderNo !== "TEST" ? <Link href={`/admin/orders?q=${x.orderNo}`} className="font-semibold text-brand-700 hover:underline">#{x.orderNo}</Link> : <span className="text-zinc-300">—</span>}</td>

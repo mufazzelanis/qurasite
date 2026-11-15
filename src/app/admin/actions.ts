@@ -15,6 +15,9 @@ import { rateLimit, clientInfo } from "@/lib/request";
 import { smsForStatus, sendSms } from "@/lib/notify";
 import { mapSteadfast, steadfastCreate, steadfastStatus } from "@/lib/steadfast";
 import type { Section } from "@/lib/permissions";
+import { descendantIds } from "@/lib/category-tree";
+import { parseBlocks, type PageBlock } from "@/lib/page-blocks";
+import { PAGE_TEMPLATES } from "@/lib/page-templates";
 
 const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 const opt = (fd: FormData, k: string) => str(fd, k) || null;
@@ -28,15 +31,49 @@ function bustCatalog() {
 }
 
 // ── Auth ──────────────────────────────────────────────
+const MAX_FAILED_LOGINS = 5;
+const LOCK_MINUTES = 15;
+
 export async function loginAction(_: unknown, fd: FormData) {
-  const { ip } = await clientInfo();
+  const { ip, userAgent } = await clientInfo();
   if (!rateLimit(`login:${ip}`, 8, 15 * 60 * 1000)) return { error: "Too many attempts. Try again in 15 minutes." };
   const email = str(fd, "email").toLowerCase();
-  const admin = await db.admin.findUnique({ where: { email } }).catch(() => null);
-  if (!admin || !admin.active || !(await bcrypt.compare(str(fd, "password"), admin.password))) return { error: "Invalid email or password" };
-  const token = await signSession({ id: admin.id, email: admin.email, name: admin.name, role: admin.role });
+
+  let admin;
+  try {
+    admin = await db.admin.findUnique({ where: { email } });
+  } catch {
+    // don't disguise a DB outage as a wrong password
+    return { error: "Cannot reach the database. Is PostgreSQL running?" };
+  }
+  const record = (ok: boolean, reason?: string) => db.loginEvent.create({ data: { adminId: admin?.id, email, ok, reason, ip, userAgent: userAgent.slice(0, 300) } }).catch(() => {});
+
+  if (!admin) {
+    await record(false, "Unknown email");
+    return { error: "Invalid email or password" };
+  }
+  if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+    await record(false, "Locked");
+    const mins = Math.ceil((+admin.lockedUntil - Date.now()) / 60000);
+    return { error: `Too many wrong passwords. Account locked for ${mins} more minute${mins > 1 ? "s" : ""}.` };
+  }
+  if (!(await bcrypt.compare(str(fd, "password"), admin.password))) {
+    const failed = admin.failedLogins + 1;
+    const lock = failed >= MAX_FAILED_LOGINS;
+    await db.admin.update({ where: { id: admin.id }, data: { failedLogins: lock ? 0 : failed, lockedUntil: lock ? new Date(Date.now() + LOCK_MINUTES * 60000) : undefined } });
+    await record(false, lock ? "Wrong password — locked" : "Wrong password");
+    if (lock) return { error: `Too many wrong passwords. Account locked for ${LOCK_MINUTES} minutes.` };
+    return { error: `Invalid email or password${MAX_FAILED_LOGINS - failed <= 2 ? ` (${MAX_FAILED_LOGINS - failed} tries left)` : ""}` };
+  }
+  if (!admin.active) {
+    await record(false, "Disabled");
+    return { error: "This account is disabled. Ask an admin to enable it." };
+  }
+
+  const token = await signSession({ id: admin.id, email: admin.email, name: admin.name, role: admin.role, sv: admin.sessionVersion });
   (await cookies()).set(SESSION_COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 7 * 86400 });
-  await db.admin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } });
+  await db.admin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date(), lastSeenAt: new Date(), lastLoginIp: ip, failedLogins: 0, lockedUntil: null } });
+  await record(true);
   await logActivity(admin, "Logged in", undefined, { ip });
   redirect("/admin");
 }
@@ -69,8 +106,12 @@ export async function updateOrderStatus(fd: FormData) {
   const me = await requireAdmin("orders");
   const id = str(fd, "id");
   const status = str(fd, "status") as OrderStatus;
-  const o = await applyStatus(id, status, me.name, opt(fd, "note"), { courier: opt(fd, "courier"), trackingCode: opt(fd, "trackingCode") });
-  if (opt(fd, "adminNote") !== undefined) await db.order.update({ where: { id }, data: { adminNote: opt(fd, "adminNote") } });
+  // only touch fields the form actually sent (quick-action buttons send just the status)
+  const extra: { courier?: string | null; trackingCode?: string | null } = {};
+  if (fd.has("courier")) extra.courier = opt(fd, "courier");
+  if (fd.has("trackingCode")) extra.trackingCode = opt(fd, "trackingCode");
+  const o = await applyStatus(id, status, me.name, opt(fd, "note"), extra);
+  if (fd.has("adminNote")) await db.order.update({ where: { id }, data: { adminNote: opt(fd, "adminNote") } });
   await logActivity(me, `Order ${o?.orderNo} → ${status}`, o?.orderNo);
   revalidatePath(`/admin/orders/${id}`);
   revalidatePath("/admin/orders");
@@ -189,6 +230,9 @@ export async function saveProduct(fd: FormData) {
     comboPrice: num(fd, "comboPrice"),
     addonNote: opt(fd, "addonNote"),
     categoryId: opt(fd, "categoryId"),
+    seoTitle: opt(fd, "seoTitle"),
+    seoDesc: opt(fd, "seoDesc"),
+    imageAlt: opt(fd, "imageAlt"),
   };
   if (id) await db.product.update({ where: { id }, data });
   else await db.product.create({ data });
@@ -207,24 +251,140 @@ export async function deleteProduct(fd: FormData) {
   revalidatePath("/admin/products");
 }
 
-export async function saveCategory(fd: FormData) {
+/** One-click switch of a boolean product flag (active / featured / isAddon) */
+export async function toggleProductFlag(fd: FormData) {
+  const me = await requireAdmin("products");
+  const field = str(fd, "field");
+  if (field !== "active" && field !== "featured" && field !== "isAddon") return;
+  const p = await db.product.findUnique({ where: { id: str(fd, "id") } });
+  if (!p) return;
+  const value = !p[field];
+  await db.product.update({ where: { id: p.id }, data: { [field]: value } });
+  await logActivity(me, `${value ? "Enabled" : "Disabled"} ${field} on ${p.name}`, p.slug);
+  bustCatalog();
+  revalidatePath("/admin/products");
+}
+
+/** Copy a product (hidden, fresh slug) so it can be edited into a variant */
+export async function duplicateProduct(fd: FormData) {
+  const me = await requireAdmin("products");
+  const p = await db.product.findUnique({ where: { id: str(fd, "id") } });
+  if (!p) return;
+  let slug = `${p.slug}-copy`;
+  for (let i = 2; await db.product.findUnique({ where: { slug }, select: { id: true } }); i++) slug = `${p.slug}-copy-${i}`;
+  const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = p;
+  const copy = await db.product.create({ data: { ...rest, slug, name: `${p.name} (copy)`, nameBn: p.nameBn ? `${p.nameBn} (কপি)` : null, active: false, featured: false } });
+  await logActivity(me, `Duplicated product ${p.name}`, slug);
+  revalidatePath("/admin/products");
+  redirect(`/admin/products/${copy.id}`);
+}
+
+/** Inline stock edit from the products table */
+export async function updateProductStock(fd: FormData) {
+  const me = await requireAdmin("products");
+  const stock = Math.max(0, Math.floor(num(fd, "stock") ?? 0));
+  const p = await db.product.update({ where: { id: str(fd, "id") }, data: { stock } });
+  await logActivity(me, `Set stock of ${p.name} to ${stock}`, p.slug);
+  bustCatalog();
+  revalidatePath("/admin/products");
+}
+
+export async function bulkProducts(fd: FormData) {
+  const me = await requireAdmin("products");
+  const ids = fd.getAll("ids").map(String).filter(Boolean);
+  const action = str(fd, "bulk");
+  if (!ids.length || !action) return;
+  const where = { id: { in: ids } };
+  if (action === "activate") await db.product.updateMany({ where, data: { active: true } });
+  else if (action === "hide") await db.product.updateMany({ where, data: { active: false } });
+  else if (action === "feature") await db.product.updateMany({ where, data: { featured: true } });
+  else if (action === "unfeature") await db.product.updateMany({ where, data: { featured: false } });
+  else if (action === "delete") {
+    // products with orders are hidden instead of deleted (order history keeps them)
+    const used = new Set((await db.orderItem.findMany({ where: { productId: { in: ids } }, select: { productId: true }, distinct: ["productId"] })).map((i) => i.productId));
+    await db.product.updateMany({ where: { id: { in: ids.filter((i) => used.has(i)) } }, data: { active: false } });
+    await db.product.deleteMany({ where: { id: { in: ids.filter((i) => !used.has(i)) } } });
+  } else return;
+  await logActivity(me, `Bulk ${action} on ${ids.length} products`);
+  bustCatalog();
+  revalidatePath("/admin/products");
+}
+
+/** true if making `parentId` the parent of `id` would create a loop */
+async function wouldLoop(id: string, parentId: string | null) {
+  if (!parentId) return false;
+  if (parentId === id) return true;
+  const all = await db.category.findMany({ select: { id: true, parentId: true } });
+  return descendantIds(all.map((c) => ({ ...c, sortOrder: 0, name: "", slug: "" })), id).has(parentId);
+}
+
+export async function saveCategory(fd: FormData): Promise<{ ok?: string; error?: string; id?: string }> {
   const me = await requireAdmin("products");
   const id = str(fd, "id");
   const name = str(fd, "name");
-  const data = { name, nameBn: opt(fd, "nameBn"), slug: slugify(str(fd, "slug") || name) || `cat-${Date.now()}`, image: opt(fd, "image"), sortOrder: num(fd, "sortOrder") ?? 0, active: fd.get("active") !== "off" };
-  if (id) await db.category.update({ where: { id }, data });
-  else await db.category.create({ data });
+  if (!name) return { error: "Name is required" };
+  const parentId = opt(fd, "parentId");
+  if (id && (await wouldLoop(id, parentId))) return { error: "A category can't be inside itself or its own subcategory" };
+  const slug = slugify(str(fd, "slug") || name) || `cat-${Date.now()}`;
+  const clash = await db.category.findUnique({ where: { slug }, select: { id: true } });
+  if (clash && clash.id !== id) return { error: `URL "/category/${slug}" is already used` };
+
+  // position is managed by the tree: new categories go last in their level, edits keep their place
+  // (unless the parent changed → move to the end of the new level)
+  const old = id ? await db.category.findUnique({ where: { id }, select: { parentId: true } }) : null;
+  const lastInLevel = async () => ((await db.category.aggregate({ where: { parentId }, _max: { sortOrder: true } }))._max.sortOrder ?? 0) + 1;
+  const sortOrder = num(fd, "sortOrder") ?? (!id || old?.parentId !== parentId ? await lastInLevel() : undefined);
+  const data = {
+    name,
+    nameBn: opt(fd, "nameBn"),
+    slug,
+    image: opt(fd, "image"),
+    sortOrder,
+    active: fd.get("active") !== "off",
+    featured: fd.get("featured") === "on",
+    parentId,
+    description: opt(fd, "description"),
+    seoTitle: opt(fd, "seoTitle"),
+    seoDesc: opt(fd, "seoDesc"),
+  };
+  const c = id ? await db.category.update({ where: { id }, data }) : await db.category.create({ data });
   await logActivity(me, `${id ? "Updated" : "Created"} category ${name}`);
   bustCatalog();
   revalidatePath("/admin/categories");
+  return { ok: id ? "Category saved" : "Category created", id: c.id };
 }
 
-export async function deleteCategory(fd: FormData) {
+/** Saves the tree after drag & drop / move buttons: [{ id, parentId, sortOrder }] */
+export async function arrangeCategories(rows: { id: string; parentId: string | null; sortOrder: number }[]): Promise<{ ok?: boolean; error?: string }> {
   const me = await requireAdmin("products");
-  const c = await db.category.delete({ where: { id: str(fd, "id") } });
+  const all = await db.category.findMany({ select: { id: true, parentId: true } });
+  const next = new Map(all.map((c) => [c.id, c.parentId]));
+  for (const r of rows) if (next.has(r.id)) next.set(r.id, r.parentId);
+  // reject loops in the resulting tree
+  for (const id of next.keys()) {
+    const seen = new Set<string>();
+    for (let p = next.get(id); p; p = next.get(p) ?? null) {
+      if (p === id || seen.has(p)) return { error: "That move would put a category inside itself" };
+      seen.add(p);
+    }
+  }
+  await db.$transaction(rows.filter((r) => next.has(r.id)).map((r) => db.category.update({ where: { id: r.id }, data: { parentId: r.parentId, sortOrder: r.sortOrder } })));
+  await logActivity(me, `Rearranged ${rows.length} categories`);
+  bustCatalog();
+  revalidatePath("/admin/categories");
+  return { ok: true };
+}
+
+export async function deleteCategory(fd: FormData): Promise<{ ok?: string; error?: string }> {
+  const me = await requireAdmin("products");
+  const c = await db.category.findUnique({ where: { id: str(fd, "id") } });
+  if (!c) return { error: "Category not found" };
+  // subcategories move up one level instead of becoming orphans
+  await db.$transaction([db.category.updateMany({ where: { parentId: c.id }, data: { parentId: c.parentId } }), db.category.delete({ where: { id: c.id } })]);
   await logActivity(me, `Deleted category ${c.name}`);
   bustCatalog();
   revalidatePath("/admin/categories");
+  return { ok: `${c.name} deleted` };
 }
 
 // ── Landing pages ─────────────────────────────────────
@@ -233,7 +393,7 @@ export async function createLanding(_: unknown, fd: FormData) {
   const slug = slugify(str(fd, "slug"));
   if (!slug) return { error: "Slug দিন (শুধু a-z, 0-9, -)" };
   if (RESERVED_SLUGS.has(slug)) return { error: `"${slug}" সংরক্ষিত — অন্য নাম দিন` };
-  if (await db.landingPage.findUnique({ where: { slug } })) return { error: "এই slug আগে থেকেই আছে" };
+  if (await slugTaken(slug)) return { error: "এই URL আগে থেকেই কোনো landing page বা page ব্যবহার করছে" };
   const productId = str(fd, "productId");
   if (!productId) return { error: "মেইন পণ্য সিলেক্ট করুন" };
   const copyFrom = str(fd, "copyFrom");
@@ -256,16 +416,32 @@ export async function createLanding(_: unknown, fd: FormData) {
   redirect(`/admin/landing/${lp.id}`);
 }
 
-export async function saveLanding(id: string, data: { slug: string; title: string; active: boolean; productId: string; extraIds: string[]; addonIds: string[]; pixelId: string; seoTitle: string; seoDesc: string; content: LandingContent }) {
+/** Landing pages and content pages share the root URL space (/<slug>) */
+async function slugTaken(slug: string, except?: { landing?: string; page?: string }) {
+  if (RESERVED_SLUGS.has(slug)) return true;
+  const [lp, pg] = await Promise.all([
+    db.landingPage.findFirst({ where: { slug, id: { not: except?.landing ?? "" } }, select: { id: true } }),
+    db.page.findFirst({ where: { slug, id: { not: except?.page ?? "" } }, select: { id: true } }),
+  ]);
+  return !!(lp || pg);
+}
+
+const cleanPixels = (mode: string, ids: string[]) => {
+  const pixelMode = ["site", "own", "none"].includes(mode) ? mode : "site";
+  return { pixelMode, pixelIds: pixelMode === "own" ? [...new Set(ids.map((x) => x.trim()).filter((x) => /^\d{5,20}$/.test(x)))] : [] };
+};
+
+export async function saveLanding(id: string, data: { slug: string; title: string; active: boolean; productId: string; extraIds: string[]; addonIds: string[]; pixelMode: string; pixelIds: string[]; seoTitle: string; seoDesc: string; content: LandingContent }) {
   const me = await requireAdmin("landing");
   const slug = slugify(data.slug);
   if (!slug || RESERVED_SLUGS.has(slug)) return { error: "এই slug ব্যবহার করা যাবে না" };
-  const clash = await db.landingPage.findFirst({ where: { slug, id: { not: id } } });
-  if (clash) return { error: "এই slug আগে থেকেই আছে" };
+  if (await slugTaken(slug, { landing: id })) return { error: "এই URL আগে থেকেই কোনো landing page বা page ব্যবহার করছে" };
+  const px = cleanPixels(data.pixelMode, data.pixelIds);
+  if (px.pixelMode === "own" && !px.pixelIds.length) return { error: "Own pixels: অন্তত একটি pixel বাছুন" };
   const old = await db.landingPage.findUnique({ where: { id } });
   await db.landingPage.update({
     where: { id },
-    data: { slug, title: data.title, active: data.active, productId: data.productId, extraIds: data.extraIds, addonIds: data.addonIds, pixelId: data.pixelId || null, seoTitle: data.seoTitle || null, seoDesc: data.seoDesc || null, content: data.content as object },
+    data: { slug, title: data.title, active: data.active, productId: data.productId, extraIds: data.extraIds, addonIds: data.addonIds, ...px, pixelId: null, seoTitle: data.seoTitle || null, seoDesc: data.seoDesc || null, content: data.content as object },
   });
   await logActivity(me, `Updated landing page /${slug}`, slug);
   revalidateTag("landing");
@@ -279,9 +455,9 @@ export async function duplicateLanding(fd: FormData) {
   const src = await db.landingPage.findUnique({ where: { id: str(fd, "id") } });
   if (!src) return;
   let slug = `${src.slug}-copy`;
-  for (let i = 2; await db.landingPage.findUnique({ where: { slug } }); i++) slug = `${src.slug}-copy${i}`;
+  for (let i = 2; await slugTaken(slug); i++) slug = `${src.slug}-copy${i}`;
   const lp = await db.landingPage.create({
-    data: { slug, title: `${src.title} (copy)`, active: false, productId: src.productId, extraIds: src.extraIds, addonIds: src.addonIds, content: src.content as object, pixelId: src.pixelId, seoTitle: src.seoTitle, seoDesc: src.seoDesc },
+    data: { slug, title: `${src.title} (copy)`, active: false, productId: src.productId, extraIds: src.extraIds, addonIds: src.addonIds, content: src.content as object, pixelMode: src.pixelMode, pixelIds: src.pixelIds, seoTitle: src.seoTitle, seoDesc: src.seoDesc },
   });
   await logActivity(me, `Duplicated /${src.slug} → /${slug}`, slug);
   revalidateTag("landing");
@@ -297,24 +473,103 @@ export async function deleteLanding(fd: FormData) {
   redirect("/admin/landing");
 }
 
-export async function saveGuide(fd: FormData) {
-  const me = await requireAdmin("landing");
-  const id = str(fd, "id");
-  const title = str(fd, "title");
-  const data = { title, slug: slugify(str(fd, "slug") || title) || `page-${Date.now()}`, content: str(fd, "content"), active: fd.get("active") === "on" };
-  if (id) await db.guidePage.update({ where: { id }, data });
-  else await db.guidePage.create({ data });
-  await logActivity(me, `${id ? "Updated" : "Created"} guide page /guide/${data.slug}`);
-  revalidateTag("guide");
-  redirect("/admin/guides");
+// ── Content pages (/<slug>) ───────────────────────────
+export type PageInput = {
+  title: string;
+  slug: string;
+  excerpt: string;
+  blocks: PageBlock[];
+  coverImage: string;
+  layout: string;
+  menu: string;
+  sortOrder: number;
+  active: boolean;
+  seoTitle: string;
+  seoDesc: string;
+  ogImage: string;
+  noindex: boolean;
+  pixelMode: string;
+  pixelIds: string[];
+};
+
+function bustPages(...slugs: string[]) {
+  revalidateTag("pages");
+  for (const s of slugs) revalidatePath(`/${s}`);
+  revalidatePath("/", "layout"); // header / footer menus
+  revalidatePath("/admin/pages");
 }
 
-export async function deleteGuide(fd: FormData) {
+export async function savePage(id: string | null, v: PageInput): Promise<{ ok?: string; error?: string; id?: string; slug?: string }> {
   const me = await requireAdmin("landing");
-  const g = await db.guidePage.delete({ where: { id: str(fd, "id") } });
-  await logActivity(me, `Deleted guide page ${g.slug}`);
-  revalidateTag("guide");
-  revalidatePath("/admin/guides");
+  const title = v.title.trim();
+  if (!title) return { error: "Title is required" };
+  const slug = slugify(v.slug || title);
+  if (!slug) return { error: "URL needs English letters or numbers (a-z, 0-9, -)" };
+  if (await slugTaken(slug, { page: id ?? undefined })) return { error: `/${slug} is already used by a landing page, page or the system` };
+  const px = cleanPixels(v.pixelMode, v.pixelIds);
+  if (px.pixelMode === "own" && !px.pixelIds.length) return { error: "Own pixels: pick at least one pixel" };
+  const data = {
+    title,
+    slug,
+    excerpt: v.excerpt.trim() || null,
+    blocks: parseBlocks(v.blocks) as object[],
+    coverImage: v.coverImage.trim() || null,
+    layout: v.layout === "wide" ? "wide" : "default",
+    menu: ["header", "footer"].includes(v.menu) ? v.menu : "none",
+    sortOrder: Math.round(Number(v.sortOrder) || 0),
+    active: !!v.active,
+    seoTitle: v.seoTitle.trim() || null,
+    seoDesc: v.seoDesc.trim() || null,
+    ogImage: v.ogImage.trim() || null,
+    noindex: !!v.noindex,
+    ...px,
+  };
+  const old = id ? await db.page.findUnique({ where: { id }, select: { slug: true } }) : null;
+  const p = id ? await db.page.update({ where: { id }, data }) : await db.page.create({ data });
+  await logActivity(me, `${id ? "Updated" : "Created"} page /${slug}`, slug);
+  bustPages(slug, ...(old && old.slug !== slug ? [old.slug] : []));
+  return { ok: id ? "Page saved — live now" : "Page created", id: p.id, slug };
+}
+
+export async function createPageFromTemplate(fd: FormData) {
+  const me = await requireAdmin("landing");
+  const tpl = PAGE_TEMPLATES.find((t) => t.key === str(fd, "template")) ?? PAGE_TEMPLATES[0];
+  let slug = tpl.slug;
+  for (let i = 2; await slugTaken(slug); i++) slug = `${tpl.slug}-${i}`;
+  const p = await db.page.create({ data: { title: tpl.title, slug, excerpt: tpl.excerpt, blocks: tpl.blocks() as object[], menu: tpl.menu, active: false } });
+  await logActivity(me, `Created page /${slug} from template "${tpl.name}"`, slug);
+  revalidatePath("/admin/pages");
+  redirect(`/admin/pages/${p.id}`);
+}
+
+export async function togglePage(fd: FormData) {
+  const me = await requireAdmin("landing");
+  const p = await db.page.findUnique({ where: { id: str(fd, "id") } });
+  if (!p) return;
+  await db.page.update({ where: { id: p.id }, data: { active: !p.active } });
+  await logActivity(me, `${p.active ? "Unpublished" : "Published"} page /${p.slug}`, p.slug);
+  bustPages(p.slug);
+}
+
+export async function duplicatePage(fd: FormData) {
+  const me = await requireAdmin("landing");
+  const src = await db.page.findUnique({ where: { id: str(fd, "id") } });
+  if (!src) return;
+  let slug = `${src.slug}-copy`;
+  for (let i = 2; await slugTaken(slug); i++) slug = `${src.slug}-copy-${i}`;
+  const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = src;
+  const p = await db.page.create({ data: { ...rest, blocks: rest.blocks as object[], slug, title: `${src.title} (copy)`, active: false, menu: "none" } });
+  await logActivity(me, `Duplicated page /${src.slug} → /${slug}`, slug);
+  revalidatePath("/admin/pages");
+  redirect(`/admin/pages/${p.id}`);
+}
+
+export async function deletePage(fd: FormData) {
+  const me = await requireAdmin("landing");
+  const p = await db.page.delete({ where: { id: str(fd, "id") } });
+  await logActivity(me, `Deleted page /${p.slug}`, p.slug);
+  bustPages(p.slug);
+  if (fd.get("back")) redirect("/admin/pages");
 }
 
 // ── Marketing: reviews, coupons, drafts ───────────────
@@ -386,6 +641,7 @@ const SETTING_SECTION: Record<keyof AllSettings, Section> = {
   invoice: "system",
   courier: "payments",
   thankYou: "mainsite",
+  seo: "mainsite",
 };
 
 export async function saveSettingsAction<K extends keyof AllSettings>(key: K, value: AllSettings[K]) {
@@ -397,7 +653,7 @@ export async function saveSettingsAction<K extends keyof AllSettings>(key: K, va
 }
 
 // ── Facebook Pixel & Conversions API ──────────────────
-export type PixelInput = { id: string; label: string; token: string; prevId: string; removeToken: boolean };
+export type PixelInput = { id: string; label: string; token: string; prevId: string; removeToken: boolean; site: boolean };
 export type PixelSettingsInput = Omit<AllSettings["tracking"], "pixels"> & { pixels: PixelInput[] };
 
 /** Tokens never travel to the browser: an empty token field keeps the saved one. */
@@ -407,10 +663,10 @@ export async function savePixelSettings(v: PixelSettingsInput) {
   const pixels = v.pixels
     .map((p) => ({ ...p, id: p.id.replace(/\D/g, "") }))
     .filter((p) => p.id)
-    .slice(0, 5)
+    .slice(0, 10)
     .map((p) => {
       const prev = old.pixels.find((x) => x.id === (p.prevId || p.id));
-      return { id: p.id, label: p.label.trim().slice(0, 60), token: p.removeToken ? "" : p.token.trim() || prev?.token || "" };
+      return { id: p.id, label: p.label.trim().slice(0, 60), token: p.removeToken ? "" : p.token.trim() || prev?.token || "", site: p.site !== false };
     });
   if (new Set(pixels.map((p) => p.id)).size !== pixels.length) return { error: "The same Pixel ID is added twice" };
   const graphVersion = /^v\d{2}\.\d$/.test(v.graphVersion.trim()) ? v.graphVersion.trim() : "v23.0";
@@ -441,8 +697,10 @@ export async function verifyPixelsAction() {
 export async function sendTestPurchaseAction(code: string) {
   await requireAdmin("system");
   const { ip, userAgent } = await clientInfo();
+  const lib = (await getSetting("tracking")).pixels.map((p) => p.id).filter(Boolean);
   const r = await sendCapi({
     force: true,
+    pixelIds: lib, // test every pixel in the library, including landing-only ones
     testCode: code.trim(),
     eventName: "Purchase",
     eventId: `test-${Date.now()}`,
@@ -472,26 +730,109 @@ export async function testSms(phone: string) {
 }
 
 // ── Users & roles ─────────────────────────────────────
-export async function saveUser(_: unknown, fd: FormData) {
+// ── Users & roles ─────────────────────────────────────
+type UserResult = { ok?: string; error?: string; password?: string };
+
+/** Never leave the shop without an active admin */
+async function isLastActiveAdmin(id: string) {
+  const u = await db.admin.findUnique({ where: { id }, select: { role: true, active: true } });
+  if (!u || u.role !== "ADMIN" || !u.active) return false;
+  return (await db.admin.count({ where: { role: "ADMIN", active: true } })) <= 1;
+}
+
+export async function saveUser(_: unknown, fd: FormData): Promise<UserResult> {
   const me = await requireAdmin("system");
   const id = str(fd, "id");
+  const name = str(fd, "name");
   const email = str(fd, "email").toLowerCase();
   const password = str(fd, "password");
   const role = (["ADMIN", "MANAGER", "STAFF"].includes(str(fd, "role")) ? str(fd, "role") : "STAFF") as Role;
-  const permissions = fd.getAll("permissions").map(String);
-  if (!email || !str(fd, "name")) return { error: "Name and email required" };
-  if (!id && password.length < 8) return { error: "Password must be at least 8 characters" };
+  const permissions = role === "STAFF" ? fd.getAll("permissions").map(String) : [];
+  const active = fd.get("active") === "on" || id === me.id;
+  if (!name || !/^\S+@\S+\.\S+$/.test(email)) return { error: "Name and a valid email are required" };
+  if ((!id || password) && password.length < 8) return { error: "Password must be at least 8 characters" };
+  if (role === "STAFF" && !permissions.length) return { error: "Tick at least one section for staff" };
   if (id === me.id && role !== "ADMIN") return { error: "You cannot remove your own admin role" };
-  const data = { name: str(fd, "name"), email, role, permissions, active: fd.get("active") === "on" || id === me.id, ...(password ? { password: await bcrypt.hash(password, 10) } : {}) };
+  if (id && (role !== "ADMIN" || !active) && (await isLastActiveAdmin(id))) return { error: "This is the last active admin — make someone else admin first" };
+
+  const data = {
+    name,
+    email,
+    role,
+    permissions,
+    active,
+    phone: opt(fd, "phone"),
+    note: opt(fd, "note"),
+    ...(password ? { password: await bcrypt.hash(password, 10), passwordChangedAt: new Date() } : {}),
+  };
   try {
     if (id) await db.admin.update({ where: { id }, data });
     else await db.admin.create({ data: { ...data, password: data.password! } });
   } catch {
-    return { error: "Email already used" };
+    return { error: "This email is already used by another user" };
   }
   await logActivity(me, `${id ? "Updated" : "Created"} user ${email} (${role})`);
   revalidatePath("/admin/users");
-  return { ok: "Saved" };
+  return { ok: id ? "User updated" : "User created" };
+}
+
+async function userAction(fd: FormData, fn: (target: { id: string; email: string; name: string }, me: { id: string; name: string }) => Promise<UserResult>): Promise<UserResult> {
+  const me = await requireAdmin("system");
+  const target = await db.admin.findUnique({ where: { id: str(fd, "id") }, select: { id: true, email: true, name: true } });
+  if (!target) return { error: "User not found" };
+  const r = await fn(target, me);
+  revalidatePath("/admin/users");
+  return r;
+}
+
+export async function toggleUserActive(fd: FormData) {
+  return userAction(fd, async (t, me) => {
+    if (t.id === me.id) return { error: "You cannot disable yourself" };
+    const u = await db.admin.findUniqueOrThrow({ where: { id: t.id } });
+    if (u.active && (await isLastActiveAdmin(t.id))) return { error: "This is the last active admin" };
+    // disabling also kills open sessions
+    await db.admin.update({ where: { id: t.id }, data: { active: !u.active, ...(u.active ? { sessionVersion: { increment: 1 } } : { failedLogins: 0, lockedUntil: null }) } });
+    await logActivity(me, `${u.active ? "Disabled" : "Enabled"} user ${t.email}`);
+    return { ok: u.active ? `${t.name} disabled and signed out` : `${t.name} can log in again` };
+  });
+}
+
+export async function revokeUserSessions(fd: FormData) {
+  return userAction(fd, async (t, me) => {
+    await db.admin.update({ where: { id: t.id }, data: { sessionVersion: { increment: 1 } } });
+    await logActivity(me, `Signed out ${t.email} from all devices`);
+    return { ok: t.id === me.id ? "Signed out everywhere — log in again" : `${t.name} signed out from all devices` };
+  });
+}
+
+export async function resetUserPassword(fd: FormData) {
+  return userAction(fd, async (t, me) => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    const bytes = crypto.getRandomValues(new Uint8Array(12));
+    const password = Array.from(bytes, (b) => chars[b % chars.length]).join("");
+    // new password + sign out old sessions + clear any lock
+    await db.admin.update({ where: { id: t.id }, data: { password: await bcrypt.hash(password, 10), passwordChangedAt: new Date(), sessionVersion: { increment: 1 }, failedLogins: 0, lockedUntil: null } });
+    await logActivity(me, `Reset password of ${t.email}`);
+    return { ok: "Password reset", password };
+  });
+}
+
+export async function unlockUser(fd: FormData) {
+  return userAction(fd, async (t, me) => {
+    await db.admin.update({ where: { id: t.id }, data: { failedLogins: 0, lockedUntil: null } });
+    await logActivity(me, `Unlocked ${t.email}`);
+    return { ok: `${t.name} unlocked` };
+  });
+}
+
+export async function deleteUser(fd: FormData) {
+  return userAction(fd, async (t, me) => {
+    if (t.id === me.id) return { error: "You cannot delete yourself" };
+    if (await isLastActiveAdmin(t.id)) return { error: "This is the last active admin" };
+    await db.admin.delete({ where: { id: t.id } });
+    await logActivity(me, `Deleted user ${t.email}`);
+    return { ok: `${t.name} deleted` };
+  });
 }
 
 export async function changePassword(_: unknown, fd: FormData) {
@@ -500,7 +841,7 @@ export async function changePassword(_: unknown, fd: FormData) {
   if (next.length < 8) return { error: "New password must be at least 8 characters" };
   const admin = await db.admin.findUnique({ where: { id: me.id } });
   if (!admin || !(await bcrypt.compare(str(fd, "current"), admin.password))) return { error: "Current password is wrong" };
-  await db.admin.update({ where: { id: me.id }, data: { password: await bcrypt.hash(next, 10) } });
+  await db.admin.update({ where: { id: me.id }, data: { password: await bcrypt.hash(next, 10), passwordChangedAt: new Date() } });
   await logActivity(me, "Changed own password");
   return { ok: "Password updated" };
 }

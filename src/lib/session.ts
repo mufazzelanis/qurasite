@@ -9,10 +9,15 @@ export async function getAdmin() {
   const jar = await cookies();
   const s = await verifySession(jar.get(SESSION_COOKIE)?.value);
   if (!s) return null;
-  // re-check DB so deactivated users / role changes apply immediately
-  const a = await db.admin.findUnique({ where: { id: s.id }, select: { id: true, name: true, email: true, role: true, permissions: true, active: true } }).catch(() => null);
-  if (!a || !a.active) return null;
-  return a;
+  // re-check DB so deactivated users / role changes / "sign out everywhere" apply immediately
+  const a = await db.admin
+    .findUnique({ where: { id: s.id }, select: { id: true, name: true, email: true, role: true, permissions: true, active: true, sessionVersion: true, lastSeenAt: true } })
+    .catch(() => null);
+  if (!a || !a.active || a.sessionVersion !== (s.sv ?? 0)) return null;
+  // "online now" — write at most once a minute
+  if (!a.lastSeenAt || Date.now() - +a.lastSeenAt > 60_000) db.admin.update({ where: { id: a.id }, data: { lastSeenAt: new Date() } }).catch(() => {});
+  const { sessionVersion: _sv, lastSeenAt: _ls, ...admin } = a;
+  return admin;
 }
 
 export async function requireAdmin(section?: Section) {

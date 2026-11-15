@@ -65,7 +65,7 @@ export default function AdminShell({ admin, pending, children }: { admin: { name
         items: [
           { href: "/admin/visitors", label: "Live Visitors", icon: Activity, section: "visitors" },
           { href: "/admin/landing", label: "Landing Pages", icon: PanelsTopLeft, section: "landing" },
-          { href: "/admin/guides", label: "Guide Pages", icon: FileText, section: "landing" },
+          { href: "/admin/pages", label: "Pages", icon: FileText, section: "landing" },
           { href: "/admin/landing-settings", label: "Landing Settings", icon: MonitorSmartphone, section: "landing" },
         ],
       },

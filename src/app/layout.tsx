@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Hind_Siliguri, Plus_Jakarta_Sans } from "next/font/google";
 import { Toaster } from "sonner";
+import { getSetting } from "@/lib/settings";
 import "./globals.css";
 
 const hind = Hind_Siliguri({ subsets: ["bengali", "latin"], weight: ["400", "500", "600", "700"], variable: "--font-hind" });
@@ -8,17 +9,31 @@ const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["500", "700", "
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
-export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  title: { default: "কুঁড়া ফুড | Qura Food — Nature in Every Spoon", template: "%s | Qura Food" },
-  description:
-    "Qura Food — চাল, বাদাম, ডাল, গম, ভুট্টা ও মটরের ১০০% প্রাকৃতিক পাউডার মিশ্রণ। কোনো প্রিজারভেটিভ নেই। সারা বাংলাদেশে ক্যাশ অন ডেলিভারি।",
-  openGraph: {
-    type: "website",
-    siteName: "Qura Food",
-    images: [{ url: "/brand/logo-card-t.png", width: 1200, height: 1200 }],
-  },
-};
+/** Site-wide SEO from Admin → Main Site Settings → SEO & sharing */
+export async function generateMetadata(): Promise<Metadata> {
+  const [seo, site] = await Promise.all([getSetting("seo"), getSetting("site")]);
+  return {
+    metadataBase: new URL(siteUrl),
+    title: { default: seo.title, template: `%s | ${seo.titleSuffix || site.name}` },
+    description: seo.description,
+    keywords: seo.keywords ? seo.keywords.split(",").map((k) => k.trim()).filter(Boolean) : undefined,
+    applicationName: site.name,
+    robots: seo.indexable ? { index: true, follow: true, googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 } } : { index: false, follow: false },
+    verification: {
+      google: seo.googleVerification || undefined,
+      other: seo.bingVerification ? { "msvalidate.01": seo.bingVerification } : undefined,
+    },
+    openGraph: {
+      type: "website",
+      locale: "bn_BD",
+      siteName: site.name,
+      title: seo.title,
+      description: seo.description,
+      images: seo.ogImage ? [{ url: seo.ogImage }] : undefined,
+    },
+    twitter: { card: "summary_large_image", title: seo.title, description: seo.description, images: seo.ogImage ? [seo.ogImage] : undefined },
+  };
+}
 
 export const viewport: Viewport = { themeColor: "#0d4524" };
 

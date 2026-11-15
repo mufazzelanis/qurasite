@@ -3,8 +3,10 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import ProductCard, { type CardProduct } from "@/components/shop/ProductCard";
 import { cn } from "@/lib/utils";
+import { descendantIds } from "@/lib/category-tree";
 
 type P = CardProduct & { tagline: string | null; categoryId: string | null };
+type C = { id: string; name: string; nameBn: string | null; parentId: string | null; slug: string; sortOrder: number };
 
 const SORTS = [
   ["featured", "জনপ্রিয়"],
@@ -12,18 +14,22 @@ const SORTS = [
   ["high", "বেশি দাম"],
 ] as const;
 
-export default function ShopGrid({ products, categories, initialCategory = "" }: { products: P[]; categories: { id: string; name: string; nameBn: string | null }[]; initialCategory?: string }) {
+/** chips = categories offered as filters (default: top level). Picking a parent also shows its subcategories' products. */
+export default function ShopGrid({ products, categories, chips, initialCategory = "" }: { products: P[]; categories: C[]; chips?: C[]; initialCategory?: string }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState(initialCategory);
   const [sort, setSort] = useState<(typeof SORTS)[number][0]>("featured");
 
+  const chipList = chips ?? categories.filter((c) => !c.parentId || !categories.some((x) => x.id === c.parentId));
+  const scope = useMemo(() => (cat ? descendantIds(categories, cat) : null), [categories, cat]);
+
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const r = products.filter((p) => (!cat || p.categoryId === cat) && (!s || [p.name, p.nameBn, p.tagline].some((x) => x?.toLowerCase().includes(s))));
+    const r = products.filter((p) => (!scope || (!!p.categoryId && scope.has(p.categoryId))) && (!s || [p.name, p.nameBn, p.tagline].some((x) => x?.toLowerCase().includes(s))));
     if (sort === "low") r.sort((a, b) => a.price - b.price);
     if (sort === "high") r.sort((a, b) => b.price - a.price);
     return r;
-  }, [products, q, sort, cat]);
+  }, [products, q, sort, scope]);
 
   return (
     <>
@@ -40,10 +46,10 @@ export default function ShopGrid({ products, categories, initialCategory = "" }:
           ))}
         </div>
       </div>
-      {categories.length > 0 && (
+      {chipList.length > 0 && (
         <div className="mb-8 flex justify-start gap-2 overflow-x-auto pb-1 sm:justify-center [scrollbar-width:none]">
-          {[{ id: "", name: "সব", nameBn: "সব" }, ...categories].map((c) => (
-            <button key={c.id} onClick={() => setCat(c.id)} className={cn("shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition", cat === c.id ? "border-gold-500 bg-gold-500 text-white" : "border-brand-900/10 bg-white text-brand-800")}>
+          {[{ id: initialCategory, name: "সব", nameBn: "সব" }, ...chipList].map((c) => (
+            <button key={c.id || "all"} onClick={() => setCat(c.id)} className={cn("shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition", cat === c.id ? "border-gold-500 bg-gold-500 text-white" : "border-brand-900/10 bg-white text-brand-800")}>
               {c.nameBn || c.name}
             </button>
           ))}

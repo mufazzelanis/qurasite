@@ -58,9 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderNo
   // when Purchase is reported later (on confirm / delivery) the add-on is already part of that order total
   after(async () => {
     if ((await getSetting("tracking")).purchaseTrigger !== "placed") return;
-    const pixelId = order.source !== "shop" ? (await db.landingPage.findUnique({ where: { slug: order.source }, select: { pixelId: true } }))?.pixelId || undefined : undefined;
     await sendCapi({
-      pixelId,
       orderNo: order.orderNo,
       source: order.source,
       eventName: "Purchase",

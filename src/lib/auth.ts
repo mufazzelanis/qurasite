@@ -3,7 +3,8 @@ import { SignJWT, jwtVerify } from "jose";
 export const SESSION_COOKIE = "qf_admin";
 const secret = () => new TextEncoder().encode(process.env.AUTH_SECRET || "dev-secret-change-me-dev-secret-change-me");
 
-export type AdminSession = { id: string; email: string; name: string; role: string };
+/** sv = Admin.sessionVersion at sign-in; bumping it in the DB invalidates the token */
+export type AdminSession = { id: string; email: string; name: string; role: string; sv?: number };
 
 export async function signSession(s: AdminSession) {
   return new SignJWT(s)

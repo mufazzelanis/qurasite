@@ -7,9 +7,10 @@ import { saveLanding } from "@/app/admin/actions";
 import type { LandingContent } from "@/lib/settings-defaults";
 import { cn, taka } from "@/lib/utils";
 import { AreaF, ImageField, ListEditor, SaveBar, TextF, Toggle } from "./fields";
+import PixelPicker, { type LibPixel, type PixelMode } from "./PixelPicker";
 
 type P = { id: string; name: string; nameBn: string | null; price: number; image: string; isAddon: boolean; active: boolean };
-type LP = { id: string; slug: string; title: string; active: boolean; productId: string; extraIds: string[]; addonIds: string[]; pixelId: string | null; seoTitle: string | null; seoDesc: string | null; content: LandingContent };
+type LP = { id: string; slug: string; title: string; active: boolean; productId: string; extraIds: string[]; addonIds: string[]; pixelMode: string; pixelIds: string[]; seoTitle: string | null; seoDesc: string | null; content: LandingContent };
 
 const TABS = ["Basic", "Products", "Design & sections", "Texts", "Lists", "Combo"] as const;
 const SECTIONS: [keyof LandingContent["sections"], string][] = [
@@ -23,7 +24,7 @@ const SECTIONS: [keyof LandingContent["sections"], string][] = [
   ["faq", "FAQ"],
 ];
 
-export default function LandingEditor({ lp, products, siteUrl }: { lp: LP; products: P[]; siteUrl: string }) {
+export default function LandingEditor({ lp, products, siteUrl, pixels }: { lp: LP; products: P[]; siteUrl: string; pixels: LibPixel[] }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Basic");
   const [v, setV] = useState(lp);
   const c = v.content;
@@ -62,9 +63,13 @@ export default function LandingEditor({ lp, products, siteUrl }: { lp: LP; produ
             </div>
           </label>
           <Toggle label="Published" checked={v.active} onChange={(x) => setV({ ...v, active: x })} help="Hidden pages show 404 to customers" />
-          <TextF label="Own Facebook Pixel ID (optional)" value={v.pixelId || ""} onChange={(x) => setV({ ...v, pixelId: x })} help="Empty = use the main pixel. Conversions API uses the same token." />
           <TextF label="SEO title" value={v.seoTitle || ""} onChange={(x) => setV({ ...v, seoTitle: x })} />
           <TextF label="SEO / share description" value={v.seoDesc || ""} onChange={(x) => setV({ ...v, seoDesc: x })} />
+          <div className="sm:col-span-2">
+            <p className="mb-1 text-sm font-medium text-zinc-700">Facebook pixel for this landing page</p>
+            <p className="mb-3 text-xs text-zinc-500">Browser pixel and Conversions API both follow this choice — PageView, ViewContent, checkout and Purchase from this page go only to these pixels.</p>
+            <PixelPicker mode={v.pixelMode as PixelMode} ids={v.pixelIds} library={pixels} onChange={(m, ids) => setV({ ...v, pixelMode: m, pixelIds: ids })} />
+          </div>
         </div>
       )}
 
@@ -156,7 +161,7 @@ export default function LandingEditor({ lp, products, siteUrl }: { lp: LP; produ
 
       <SaveBar
         onSave={async () => {
-          const r = await saveLanding(lp.id, { ...v, pixelId: v.pixelId || "", seoTitle: v.seoTitle || "", seoDesc: v.seoDesc || "" });
+          const r = await saveLanding(lp.id, { ...v, seoTitle: v.seoTitle || "", seoDesc: v.seoDesc || "" });
           if (r && "slug" in r && r.slug && r.slug !== lp.slug) location.reload();
           return r;
         }}

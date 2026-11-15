@@ -5,6 +5,7 @@ import { db } from "./db";
 import { getSetting } from "./settings";
 import { SERVER_ONLY_EVENTS, type FbPixel, type TrackingSettings } from "./settings-defaults";
 import { parseUA } from "./ua";
+import { pixelIdsFor } from "./pixels";
 
 const sha = (v?: string | null) => (v ? createHash("sha256").update(v.trim().toLowerCase()).digest("hex") : undefined);
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -14,7 +15,8 @@ export const BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|facebookcatalo
 export const isBot = (ua?: string | null) => !ua || BOT_RE.test(ua);
 
 export type CapiEvent = {
-  pixelId?: string; // landing-page specific pixel
+  /** explicit pixel list (admin test). Normally resolved from `source` — see lib/pixels.ts */
+  pixelIds?: string[];
   eventName: string;
   eventId: string; // the browser pixel uses the same id → Facebook de-duplicates
   url?: string;
@@ -30,15 +32,14 @@ export type CapiEvent = {
   force?: boolean; // ignore the on/off switches (admin test)
 };
 
-/** Which pixels receive a server event: the landing page's own pixel, or every configured pixel. */
-function targets(t: TrackingSettings, pixelId?: string): FbPixel[] {
-  const withToken = t.pixels.filter((p) => p.id && p.token);
-  if (pixelId) {
-    const own = t.pixels.find((p) => p.id === pixelId);
-    const token = own?.token || withToken[0]?.token; // landing pixel uses the primary token unless it has its own
-    return token ? [{ id: pixelId, label: own?.label || "Landing page pixel", token }] : [];
-  }
-  return withToken;
+/** Pixel ids → pixels with a token. A pixel without its own token uses the primary (first) token. */
+function targets(t: TrackingSettings, ids: string[]): FbPixel[] {
+  const primary = t.pixels.find((p) => p.id && p.token)?.token;
+  return ids.flatMap((id) => {
+    const lib = t.pixels.find((p) => p.id === id);
+    const token = lib?.token || primary;
+    return token ? [{ id, label: lib?.label || "Extra pixel", token }] : [];
+  });
 }
 
 function buildEvent(e: CapiEvent) {
@@ -92,7 +93,7 @@ export async function sendCapi(e: CapiEvent) {
       if (e.eventName in t.events && !t.events[e.eventName as keyof typeof t.events]) return { skipped: "event off" };
       if (e.eventName === "PageView" && !t.serverPageView) return { skipped: "server PageView off" };
     }
-    const list = targets(t, e.pixelId);
+    const list = targets(t, e.pixelIds ?? (await pixelIdsFor(e.source, t)));
     if (!list.length) return { skipped: "no pixel" };
 
     const { device, os, browser } = parseUA(e.userAgent || "");
@@ -202,9 +203,7 @@ type OrderForCapi = {
 /** Server Purchase for an order. eventId = order.id (same as the browser Purchase on the thank-you page). */
 export async function sendOrderPurchase(o: OrderForCapi, url?: string) {
   const t = await getSetting("tracking");
-  const pixelId = o.source !== "shop" ? (await db.landingPage.findUnique({ where: { slug: o.source }, select: { pixelId: true } }))?.pixelId || undefined : undefined;
   return sendCapi({
-    pixelId,
     eventName: "Purchase",
     eventId: o.id,
     url,
@@ -238,9 +237,7 @@ export async function capiForStatus(o: OrderForCapi, status: string) {
   }
   if (status === "DELIVERED" || status === "CANCELLED") {
     const name = status === "DELIVERED" ? "OrderDelivered" : "OrderCancelled";
-    const pixelId = o.source !== "shop" ? (await db.landingPage.findUnique({ where: { slug: o.source }, select: { pixelId: true } }))?.pixelId || undefined : undefined;
     await sendCapi({
-      pixelId,
       eventName: name,
       eventId: `${name}-${o.id}`,
       ip: o.ip,

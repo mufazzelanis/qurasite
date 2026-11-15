@@ -35,7 +35,8 @@ export async function POST(req: Request) {
       data: {
         sessionId: sid,
         path,
-        landingSlug: slug,
+        // content pages send "page:<slug>" (for pixel routing) — they are not landing-page visits
+        landingSlug: slug?.startsWith("page:") ? null : slug,
         ip,
         device,
         os,
@@ -49,8 +50,7 @@ export async function POST(req: Request) {
     after(async () => {
       await db.analyticsEvent.create({ data: { name: "PageView", sessionId: sid, path } }).catch(() => {});
       if (b.eventId) {
-        const pixelId = slug ? (await db.landingPage.findUnique({ where: { slug }, select: { pixelId: true } }))?.pixelId || undefined : undefined;
-        await sendCapi({ pixelId, source: slug || "shop", eventName: "PageView", eventId: String(b.eventId), url: clip(b.url, 500) || undefined, ip, userAgent, fbp: jar.get("_fbp")?.value, fbc: jar.get("_fbc")?.value });
+        await sendCapi({ source: slug || "shop", eventName: "PageView", eventId: String(b.eventId), url: clip(b.url, 500) || undefined, ip, userAgent, fbp: jar.get("_fbp")?.value, fbc: jar.get("_fbc")?.value });
       }
       // keep 90 days of visit data
       if (Math.random() < 0.003) {

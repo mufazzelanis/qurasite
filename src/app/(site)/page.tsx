@@ -8,25 +8,54 @@ import { getActiveProducts, getActiveReviews, getCategories } from "@/lib/catalo
 import { getLandingSlugs } from "@/lib/landing";
 import { getSetting } from "@/lib/settings";
 import { taka } from "@/lib/utils";
+import { JsonLd, abs } from "@/lib/seo";
+import { descendantIds } from "@/lib/category-tree";
 
 export const revalidate = 3600;
 
 export default async function Home() {
-  const [main, landing, products, categories, reviews, slugs] = await Promise.all([
+  const [main, landing, products, categories, reviews, slugs, site, seo] = await Promise.all([
     getSetting("mainSite"),
     getSetting("landing"),
     getActiveProducts(),
     getCategories(),
     getActiveReviews(),
     getLandingSlugs().catch(() => [] as string[]),
+    getSetting("site"),
+    getSetting("seo"),
   ]);
   const mains = products.filter((p) => !p.isAddon);
   const addons = products.filter((p) => p.isAddon);
   const hero = mains.find((p) => p.featured) || mains[0];
   const comboLink = slugs[0] ? `/${slugs[0]}#combo` : "/shop";
+  // homepage tiles: categories marked "featured", otherwise the top level
+  const featuredCats = categories.filter((c) => c.featured);
+  const homeCats = (featuredCats.length ? featuredCats : categories.filter((c) => !c.parentId)).sort((a, b) => a.sortOrder - b.sortOrder);
+  const sameAs =[site.facebook, site.instagram, site.youtube, site.tiktok].filter(Boolean);
 
   return (
     <>
+      <JsonLd
+        data={[
+          {
+            "@context": "https://schema.org",
+            "@type": "Organization",
+            name: site.name,
+            alternateName: site.nameBn,
+            url: abs("/"),
+            logo: abs("/icon.png"),
+            image: abs(seo.ogImage || "/icon.png"),
+            description: seo.description,
+            email: site.email || undefined,
+            telephone: site.phone || undefined,
+            address: site.address ? { "@type": "PostalAddress", streetAddress: site.address, addressCountry: "BD" } : undefined,
+            sameAs: sameAs.length ? sameAs : undefined,
+            contactPoint: site.phone ? { "@type": "ContactPoint", telephone: site.phone, contactType: "customer service", areaServed: "BD", availableLanguage: ["Bengali", "English"] } : undefined,
+          },
+          { "@context": "https://schema.org", "@type": "WebSite", name: site.name, alternateName: site.nameBn, url: abs("/"), inLanguage: "bn-BD" },
+        ]}
+      />
+      <h1 className="sr-only">{seo.title}</h1>
       <section className="container-x pt-4 sm:pt-6">
         <HeroSlider slides={main.slides} />
       </section>
@@ -43,15 +72,21 @@ export default async function Home() {
         ))}
       </section>
 
-      {categories.length > 0 && (
+      {homeCats.length > 0 && (
         <section className="container-x pb-6">
           <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none]">
-            {categories.map((c) => (
-              <Link key={c.id} href={`/category/${c.slug}`} className="flex shrink-0 items-center gap-2 rounded-full border border-brand-900/10 bg-white px-4 py-2.5 font-semibold text-brand-800 transition hover:border-gold-400 hover:shadow-md">
-                {c.image && <Image src={c.image} alt="" width={28} height={28} className="size-7 rounded-full object-cover" />}
-                {c.nameBn || c.name}
-              </Link>
-            ))}
+            {homeCats.map((c) => {
+              const scope = descendantIds(categories, c.id);
+              const inCat = products.filter((p) => p.categoryId && scope.has(p.categoryId));
+              const img = c.image || inCat[0]?.image;
+              return (
+                <Link key={c.id} href={`/category/${c.slug}`} className="group flex w-36 shrink-0 flex-col items-center gap-2 rounded-3xl border border-brand-900/10 bg-white p-3 text-center transition hover:-translate-y-1 hover:border-gold-400 hover:shadow-xl hover:shadow-brand-900/10 sm:w-44">
+                  <span className="relative aspect-square w-full overflow-hidden rounded-2xl bg-gradient-to-br from-cream to-gold-50">{img && <Image src={img} alt={c.nameBn || c.name} fill sizes="176px" className="object-contain p-3 transition duration-500 group-hover:scale-110" />}</span>
+                  <span className="line-clamp-1 font-semibold text-brand-900">{c.nameBn || c.name}</span>
+                  <span className="-mt-1.5 text-xs text-brand-900/50">{inCat.length} টি পণ্য</span>
+                </Link>
+              );
+            })}
           </div>
         </section>
       )}

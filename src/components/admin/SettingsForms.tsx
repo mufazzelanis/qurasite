@@ -23,40 +23,6 @@ function useS<K extends keyof AllSettings>(initial: AllSettings[K]) {
   return [v, set] as const;
 }
 
-// ── Main site ─────────────────────────────────────────
-export function MainSiteForm({ initial }: { initial: AllSettings["mainSite"] }) {
-  const [v, set] = useS<"mainSite">(initial);
-  return (
-    <div className="space-y-4">
-      <Card title="Homepage">
-        <Full><TextF label="Announcement bar" value={v.announcement} onChange={(x) => set("announcement", x)} /></Full>
-        <TextF label="Featured products title" value={v.featuredTitle} onChange={(x) => set("featuredTitle", x)} />
-        <Toggle label="Show customer reviews" checked={v.showReviews} onChange={(x) => set("showReviews", x)} />
-      </Card>
-      <div className="a-card space-y-3">
-        <h2 className="font-semibold">Hero slider</h2>
-        {v.slides.map((s, i) => (
-          <div key={i} className="grid gap-3 rounded-xl bg-zinc-50 p-3 sm:grid-cols-2">
-            <ImageField label={`Slide ${i + 1} image`} value={s.image} onChange={(x) => set("slides", v.slides.map((o, j) => (j === i ? { ...o, image: x } : o)))} />
-            <div className="space-y-2">
-              <TextF label="Title" value={s.title} onChange={(x) => set("slides", v.slides.map((o, j) => (j === i ? { ...o, title: x } : o)))} />
-              <TextF label="Subtitle" value={s.subtitle} onChange={(x) => set("slides", v.slides.map((o, j) => (j === i ? { ...o, subtitle: x } : o)))} />
-              <div className="grid grid-cols-2 gap-2">
-                <TextF label="Button" value={s.cta} onChange={(x) => set("slides", v.slides.map((o, j) => (j === i ? { ...o, cta: x } : o)))} />
-                <TextF label="Link" value={s.link} onChange={(x) => set("slides", v.slides.map((o, j) => (j === i ? { ...o, link: x } : o)))} />
-              </div>
-              <button type="button" onClick={() => set("slides", v.slides.filter((_, j) => j !== i))} className="text-sm text-rose-600">Remove slide</button>
-            </div>
-          </div>
-        ))}
-        <button type="button" className="a-btn-light" onClick={() => set("slides", [...v.slides, { image: "/brand/spoon.jpg", title: "", subtitle: "", cta: "এখনই কিনুন", link: "/shop" }])}>+ Add slide</button>
-      </div>
-      <ListEditor title="Trust badges" items={v.trustBadges} fields={[["emoji", "Emoji"], ["title", "Title"], ["text", "Text"]]} onChange={(x) => set("trustBadges", x)} />
-      <SaveBar onSave={() => saveSettingsAction("mainSite", v)} />
-    </div>
-  );
-}
-
 // ── Payments, delivery, courier ───────────────────────
 export function PaymentsForm({ payments, delivery, courier }: { payments: AllSettings["payments"]; delivery: AllSettings["delivery"]; courier: AllSettings["courier"] }) {
   const [p, setP] = useS<"payments">(payments);
@@ -193,28 +159,6 @@ export function InvoiceForm({ initial }: { initial: AllSettings["invoice"] }) {
         <Toggle label="Show order source (landing page)" checked={v.showSource} onChange={(x) => set("showSource", x)} />
       </Card>
       <SaveBar onSave={() => saveSettingsAction("invoice", v)} />
-    </div>
-  );
-}
-
-// ── Thank-you page (after an order) ───────────────────
-export function ThankYouForm({ initial }: { initial: AllSettings["thankYou"] }) {
-  const [v, set] = useS<"thankYou">(initial);
-  return (
-    <div className="space-y-4">
-      <Card title="Thank-you page" desc="Shown after every order (main site + landing pages).">
-        <Full><TextF label="Heading" value={v.heading} onChange={(x) => set("heading", x)} /></Full>
-        <Full><TextF label="Sub-heading" value={v.subheading} onChange={(x) => set("subheading", x)} /></Full>
-        <Full><TextF label="Cash-on-delivery note" value={v.codNote} onChange={(x) => set("codNote", x)} /></Full>
-        <Full><TextF label="Guide links title" value={v.guidesTitle} onChange={(x) => set("guidesTitle", x)} help="Leave the list empty to hide this box" /></Full>
-      </Card>
-      <ListEditor
-        title="Guide links (icon: book, spoon, leaf, heart, truck, shield, phone, star, gift)"
-        items={v.guides}
-        fields={[["icon", "Icon"], ["title", "Title"], ["subtitle", "Short description"], ["href", "Link (e.g. /guide/how-to-use)"]]}
-        onChange={(x) => set("guides", x)}
-      />
-      <SaveBar onSave={() => saveSettingsAction("thankYou", v)} />
     </div>
   );
 }

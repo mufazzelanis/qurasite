@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Mail, MapPin, Phone } from "lucide-react";
 import type { SiteSettings } from "@/lib/settings";
 
-export default function Footer({ site }: { site: SiteSettings }) {
+export default function Footer({ site, pages = [] }: { site: SiteSettings; pages?: { slug: string; title: string }[] }) {
   return (
     <footer className="relative mt-24 overflow-hidden bg-brand-900 text-white">
       <svg className="absolute -top-px left-0 w-full text-cream" viewBox="0 0 1440 60" preserveAspectRatio="none" aria-hidden>
@@ -26,6 +26,9 @@ export default function Footer({ site }: { site: SiteSettings }) {
             <li><Link href="/shop" className="hover:text-gold-300">সব পণ্য</Link></li>
             <li><Link href="/track" className="hover:text-gold-300">অর্ডার ট্র্যাক করুন</Link></li>
             <li><Link href="/#faq" className="hover:text-gold-300">সাধারণ জিজ্ঞাসা</Link></li>
+            {pages.map((p) => (
+              <li key={p.slug}><Link href={`/${p.slug}`} className="hover:text-gold-300">{p.title}</Link></li>
+            ))}
           </ul>
         </div>
         <div>

@@ -6,9 +6,9 @@ import { toast } from "sonner";
 import { retryFailedCapiAction, savePixelSettings, sendTestPurchaseAction, verifyPixelsAction, type PixelInput, type PixelSettingsInput } from "@/app/admin/actions";
 import { FB_EVENTS, type TrackingSettings } from "@/lib/settings-defaults";
 import { cn } from "@/lib/utils";
-import { SaveBar, TextF } from "./fields";
+import { SaveBar, TextF, Toggle } from "./fields";
 
-export type PixelPublic = { id: string; label: string; tokenTail: string };
+export type PixelPublic = { id: string; label: string; tokenTail: string; site: boolean };
 type Initial = Omit<TrackingSettings, "pixels"> & { pixels: PixelPublic[] };
 
 const Section = ({ title, desc, right, children }: { title: string; desc?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode }) => (
@@ -57,7 +57,7 @@ export function PixelSettingsForm({ initial }: { initial: Initial }) {
   });
   const set = <K extends keyof typeof v>(k: K, val: (typeof v)[K]) => setV((p) => ({ ...p, [k]: val }));
   const [pixels, setPixels] = useState<(PixelInput & { tokenTail: string })[]>(() =>
-    (initial.pixels.length ? initial.pixels : [{ id: "", label: "", tokenTail: "" }]).map((p) => ({ id: p.id, label: p.label, tokenTail: p.tokenTail, prevId: p.id, token: "", removeToken: false })),
+    (initial.pixels.length ? initial.pixels : [{ id: "", label: "", tokenTail: "", site: true }]).map((p) => ({ id: p.id, label: p.label, tokenTail: p.tokenTail, prevId: p.id, token: "", removeToken: false, site: p.site })),
   );
   const upd = (i: number, patch: Partial<PixelInput>) => setPixels((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
@@ -92,14 +92,22 @@ export function PixelSettingsForm({ initial }: { initial: Initial }) {
                 <input type="checkbox" checked={p.removeToken} onChange={(e) => upd(i, { removeToken: e.target.checked })} className="accent-rose-600" /> Remove the saved token (browser pixel only)
               </label>
             )}
+            <div className={cn("rounded-xl p-3", p.site ? "bg-emerald-50/70 ring-1 ring-emerald-100" : "bg-zinc-50 ring-1 ring-zinc-200")}>
+              <Toggle
+                label="Use on the main site"
+                checked={p.site}
+                onChange={(x) => upd(i, { site: x })}
+                help={p.site ? "Fires on home, shop, products, checkout — and on every landing page / page set to “Same as main site”." : "Library only — fires only on landing pages / pages that pick it."}
+              />
+            </div>
           </div>
         ))}
-        {pixels.length < 5 && (
-          <button type="button" onClick={() => setPixels((ps) => [...ps, { id: "", label: "", token: "", prevId: "", removeToken: false, tokenTail: "" }])} className="a-btn-light">
+        {pixels.length < 10 && (
+          <button type="button" onClick={() => setPixels((ps) => [...ps, { id: "", label: "", token: "", prevId: "", removeToken: false, tokenTail: "", site: false }])} className="a-btn-light">
             <Plus className="size-4" /> Add another pixel
           </button>
         )}
-        <p className="text-xs text-zinc-400">A landing page can use its own pixel instead (Landing Pages → page → Pixel ID); it uses the primary token unless that pixel is also added here.</p>
+        <p className="text-xs text-zinc-400">Each landing page and page chooses its own pixels (Same as main site / Own pixels / None) in its editor. See “Where each pixel fires” below.</p>
       </Section>
 
       <Section title="Tracking channels">
