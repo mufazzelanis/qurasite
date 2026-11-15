@@ -1,0 +1,366 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN // everything
+  MANAGER // everything except users & system settings
+  STAFF // only sections listed in `permissions`
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum DeliveryArea {
+  INSIDE_DHAKA
+  SUB_DHAKA
+  OUTSIDE_DHAKA
+}
+
+// ───────────────────────── Admin ─────────────────────────
+
+model Admin {
+  id          String    @id @default(cuid())
+  name        String
+  email       String    @unique
+  password    String
+  role        Role      @default(ADMIN)
+  permissions String[]
+  active      Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  adminId   String?
+  adminName String
+  action    String
+  target    String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ───────────────────────── Catalog ─────────────────────────
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  nameBn    String?
+  slug      String    @unique
+  image     String?
+  sortOrder Int       @default(0)
+  active    Boolean   @default(true)
+  products  Product[]
+}
+
+model Product {
+  id           String      @id @default(cuid())
+  name         String
+  nameBn       String?
+  slug         String      @unique
+  tagline      String?
+  description  String?
+  price        Int
+  comparePrice Int?
+  weight       String?
+  image        String
+  gallery      String[]
+  stock        Int         @default(100)
+  active       Boolean     @default(true)
+  featured     Boolean     @default(false)
+  /// Add-on product (e.g. honey, jaggery) shown as combo / order bump
+  isAddon      Boolean     @default(false)
+  /// Special price when bought together with a main product
+  comboPrice   Int?
+  /// Short persuasive line shown in the combo offer
+  addonNote    String?
+  sortOrder    Int         @default(0)
+  categoryId   String?
+  category     Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  items        OrderItem[]
+}
+
+/// A landing page served at qurafood.com/<slug>
+model LandingPage {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  active    Boolean  @default(true)
+  productId String // main product
+  extraIds  String[] // other main products selectable on the form
+  addonIds  String[] // combo add-ons (honey, jaggery…)
+  /// LandingContent JSON (hero, sections, texts, combo, colors…)
+  content   Json
+  pixelId   String? // optional: own Facebook Pixel for this page
+  seoTitle  String?
+  seoDesc   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Simple content pages: /guide/<slug> (privacy, refund, how-to…)
+model GuidePage {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  content   String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Coupon {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  type        String    @default("FLAT") // FLAT | PERCENT
+  value       Int
+  minOrder    Int       @default(0)
+  maxDiscount Int?
+  usageLimit  Int?
+  used        Int       @default(0)
+  expiresAt   DateTime?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  name      String
+  location  String?
+  rating    Int      @default(5)
+  text      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ───────────────────────── Orders ─────────────────────────
+
+model Order {
+  id             String           @id @default(cuid())
+  seq            Int              @unique @default(autoincrement())
+  orderNo        String           @unique
+  customerName   String
+  phone          String
+  address        String
+  notes          String?
+  deliveryArea   DeliveryArea
+  deliveryCharge Int
+  subtotal       Int
+  /// Combo savings already reflected in item prices (for reporting)
+  discount       Int              @default(0)
+  couponCode     String?
+  couponDiscount Int              @default(0)
+  total          Int
+  status         OrderStatus      @default(PENDING)
+  paymentMethod  String           @default("COD") // COD | BKASH | NAGAD | ROCKET
+  advanceAmount  Int              @default(0)
+  paymentTrxId   String?
+  phoneVerified  Boolean          @default(false)
+  courier        String?
+  trackingCode   String?
+  consignmentId  String?
+  adminNote      String?
+  /// "shop" or the landing page slug
+  source         String           @default("shop")
+  // fraud
+  fraudScore     Int              @default(0)
+  fraudFlags     String[]
+  // attribution / tracking
+  ip             String?
+  userAgent      String?
+  sessionId      String?
+  visitId        String?
+  fbp            String?
+  fbc            String?
+  utmSource      String?
+  utmMedium      String?
+  utmCampaign    String?
+  hourBd         Int              @default(0) // 0–23, Bangladesh time — "Time of day" filter
+  items          OrderItem[]
+  history        OrderStatusLog[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([phone])
+  @@index([status])
+  @@index([createdAt])
+  @@index([source])
+  @@index([hourBd])
+  @@index([utmCampaign])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+  name      String
+  price     Int
+  quantity  Int
+  /// null = normal, "bump" = combo add-on at checkout, "post" = added after purchase
+  source    String?
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model OrderStatusLog {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  by        String?
+  createdAt DateTime    @default(now())
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+/// Checkout forms that were started but not submitted (abandoned carts)
+model DraftOrder {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  name      String?
+  phone     String?
+  address   String?
+  cart      Json?
+  source    String?
+  converted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Blocklist {
+  id        String   @id @default(cuid())
+  type      String // "phone" | "ip"
+  value     String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([type, value])
+}
+
+model OtpCode {
+  id        String   @id @default(cuid())
+  phone     String
+  codeHash  String
+  attempts  Int      @default(0)
+  verified  Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
+// ───────────────────────── Analytics ─────────────────────────
+
+/// One row per page open. Heartbeats update lastSeen / stage / scroll.
+model PageVisit {
+  id           String    @id @default(cuid())
+  sessionId    String
+  path         String
+  landingSlug  String? // null = main site
+  ip           String?
+  device       String? // Phone | Tablet | Computer
+  os           String?
+  browser      String?
+  source       String // facebook | google | other | direct
+  referrer     String?
+  utmCampaign  String?
+  stage        String    @default("top") // top | reading | form
+  maxScroll    Int       @default(0)
+  durationSec  Int       @default(0)
+  reachedForm  Boolean   @default(false)
+  clickedOrder Boolean   @default(false)
+  orderNo      String?
+  startedAt    DateTime  @default(now())
+  lastSeen     DateTime  @default(now())
+  leftAt       DateTime?
+
+  @@index([startedAt])
+  @@index([lastSeen])
+  @@index([landingSlug, startedAt])
+  @@index([sessionId])
+}
+
+/// Order / call / WhatsApp / sticky-bar button presses
+model ClickEvent {
+  id          String   @id @default(cuid())
+  visitId     String?
+  sessionId   String?
+  path        String
+  landingSlug String?
+  button      String // order_button | sticky_bar | confirm_order | call | whatsapp | combo
+  label       String?
+  amount      Int?
+  ip          String?
+  device      String?
+  os          String?
+  browser     String?
+  afterSec    Int      @default(0)
+  orderNo     String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([sessionId])
+}
+
+/// Pixel-style funnel events (ViewContent, AddToCart, InitiateCheckout, Purchase…)
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  name      String
+  sessionId String?
+  path      String?
+  value     Int?
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
+}
+
+/// Key/value JSON settings
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+/// Every Conversions API request (one row per pixel) — Admin → Facebook Pixel → Server event log. Kept 30 days.
+model CapiLog {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+  eventName  String
+  eventId    String
+  pixelId    String
+  pixelLabel String?
+  orderNo    String?
+  source     String? // "shop" or landing slug
+  result     String // sent | failed | bot
+  status     Int     @default(0) // HTTP status from Facebook (0 = network error / not sent)
+  response   String? // "Received 1 · trace AbC…" or the error message
+  ip         String?
+  device     String?
+  os         String?
+  browser    String?
+  isTest     Boolean  @default(false)
+  payload    Json? // kept only for failed events (retry)
+  retries    Int      @default(0)
+
+  @@index([createdAt])
+  @@index([eventName, createdAt])
+  @@index([result, createdAt])
+  @@index([ip])
+  @@index([orderNo])
+}
