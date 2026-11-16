@@ -25,8 +25,10 @@
   --color-cream: #faf3e6;
   --color-cream-dark: #f3e7cf;
 
-  --font-sans: var(--font-hind), var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-jakarta), var(--font-hind), ui-sans-serif, sans-serif;
+  /* English font first: Latin letters use it, Bengali letters fall through to the Bangla font.
+     --font-en / --font-bn (+ -h for headings) are set on <html> from Admin → Fonts. */
+  --font-sans: var(--font-en), var(--font-bn), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-en-h), var(--font-bn-h), ui-sans-serif, sans-serif;
 
   --animate-float: float 6s ease-in-out infinite;
   --animate-float-slow: float 9s ease-in-out infinite;

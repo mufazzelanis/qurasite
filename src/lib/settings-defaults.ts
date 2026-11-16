@@ -1,4 +1,6 @@
 /** Settings types + defaults. No server imports — safe for client components. */
+import { DEFAULT_TYPOGRAPHY, type TypographySettings } from "./font-catalog";
+export type { TypographySettings };
 
 export type SiteSettings = {
   name: string;
@@ -201,6 +203,7 @@ export type AllSettings = {
   courier: CourierSettings;
   thankYou: ThankYouSettings;
   seo: SeoSettings;
+  typography: TypographySettings;
 };
 
 /** Per landing page content (stored in LandingPage.content) */
@@ -395,6 +398,7 @@ export const DEFAULT_SETTINGS: AllSettings = {
     bingVerification: "",
     indexable: true,
   },
+  typography: DEFAULT_TYPOGRAPHY,
 };
 
 export const DEFAULT_LANDING_CONTENT: LandingContent = {

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, BarChart3, Bell, ChevronDown, ChevronsLeft, CreditCard, ExternalLink, FileText, Gauge, LayoutDashboard, LogOut, Menu, MessageSquareQuote,
-  MonitorSmartphone, Package, PanelsTopLeft, Printer, Receipt, Search, Settings, ShieldAlert, ShoppingCart, Store, Tags, TicketPercent, UserCog, UserX, Users, X,
+  MonitorSmartphone, Package, PanelsTopLeft, Printer, Receipt, Search, Settings, ShieldAlert, ShoppingCart, Store, Tags, TicketPercent, Type, UserCog, UserX, Users, X,
 } from "lucide-react";
 import { logoutAction } from "@/app/admin/actions";
 import { can, type Section } from "@/lib/permissions";
@@ -57,6 +57,7 @@ export default function AdminShell({ admin, pending, children }: { admin: { name
           { href: "/admin/products", label: "Products", icon: Package, section: "products" },
           { href: "/admin/categories", label: "Categories", icon: Tags, section: "products" },
           { href: "/admin/main-site", label: "Main Site Settings", icon: Store, section: "mainsite" },
+          { href: "/admin/fonts", label: "Fonts", icon: Type, section: "mainsite" },
           { href: "/admin/payments", label: "Payments & Delivery", icon: CreditCard, section: "payments" },
         ],
       },

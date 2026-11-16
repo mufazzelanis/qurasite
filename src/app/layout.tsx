@@ -1,11 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Hind_Siliguri, Plus_Jakarta_Sans } from "next/font/google";
 import { Toaster } from "sonner";
 import { getSetting } from "@/lib/settings";
+import { fontVariables } from "@/lib/fonts";
+import { typographyVars } from "@/lib/font-catalog";
 import "./globals.css";
-
-const hind = Hind_Siliguri({ subsets: ["bengali", "latin"], weight: ["400", "500", "600", "700"], variable: "--font-hind" });
-const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["500", "700", "800"], variable: "--font-jakarta" });
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
@@ -37,10 +35,14 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const viewport: Viewport = { themeColor: "#0d4524" };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // fonts chosen in Admin → Fonts (whole site, landing pages and admin)
+  const typography = await getSetting("typography");
   return (
-    <html lang="bn" className={`${hind.variable} ${jakarta.variable}`}>
-      <body>
+    // suppressHydrationWarning: browser extensions (Grammarly, translators, password managers)
+    // add attributes to <html>/<body> before React loads — ignore those, only on these two tags
+    <html lang="bn" className={fontVariables} style={typographyVars(typography) as React.CSSProperties} suppressHydrationWarning>
+      <body suppressHydrationWarning>
         {children}
         <Toaster position="top-center" richColors closeButton />
       </body>

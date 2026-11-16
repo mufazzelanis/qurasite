@@ -642,6 +642,7 @@ const SETTING_SECTION: Record<keyof AllSettings, Section> = {
   courier: "payments",
   thankYou: "mainsite",
   seo: "mainsite",
+  typography: "mainsite",
 };
 
 export async function saveSettingsAction<K extends keyof AllSettings>(key: K, value: AllSettings[K]) {

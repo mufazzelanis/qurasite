@@ -7,7 +7,8 @@ import { JsonLd, abs, breadcrumbLd } from "@/lib/seo";
 import { cn } from "@/lib/utils";
 import LiteVideo from "@/components/lp/LiteVideo";
 
-type PageData = { slug: string; title: string; excerpt: string | null; coverImage: string | null; layout: string; blocks: PageBlock[]; updatedAt: Date };
+/** updatedAt may arrive as a string: unstable_cache stores data as JSON */
+type PageData = { slug: string; title: string; excerpt: string | null; coverImage: string | null; layout: string; blocks: PageBlock[]; updatedAt: Date | string };
 
 /** Safe inline formatting: **bold** and [text](url) — no raw HTML is ever rendered */
 function inline(text: string): ReactNode[] {
@@ -133,6 +134,7 @@ export default function PageView({ page }: { page: PageData }) {
   const wide = page.layout === "wide";
   const toc = headings.length >= 3;
   const words = blocksText(page.blocks).split(" ").length;
+  const updated = new Date(page.updatedAt);
 
   return (
     <article className="pb-10">
@@ -142,7 +144,7 @@ export default function PageView({ page }: { page: PageData }) {
             ["হোম", "/"],
             [page.title, `/${page.slug}`],
           ]),
-          { "@context": "https://schema.org", "@type": "WebPage", name: page.title, description: page.excerpt || undefined, url: abs(`/${page.slug}`), dateModified: page.updatedAt.toISOString(), inLanguage: "bn-BD" },
+          { "@context": "https://schema.org", "@type": "WebPage", name: page.title, description: page.excerpt || undefined, url: abs(`/${page.slug}`), dateModified: updated.toISOString(), inLanguage: "bn-BD" },
           ...(faqs.length ? [{ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: faqs.map((f) => ({ "@type": "Question", name: f.q, acceptedAnswer: { "@type": "Answer", text: f.a } })) }] : []),
         ]}
       />
@@ -164,7 +166,7 @@ export default function PageView({ page }: { page: PageData }) {
           {page.excerpt && <p className="mt-4 max-w-2xl text-lg leading-relaxed text-brand-900/70">{page.excerpt}</p>}
           <p className="mt-4 flex items-center gap-2 text-xs text-brand-900/40">
             <CalendarDays className="size-3.5" />
-            আপডেট: {page.updatedAt.toLocaleDateString("bn-BD", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Dhaka" })}
+            আপডেট: {updated.toLocaleDateString("bn-BD", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Dhaka" })}
             {words > 150 && <> · {Math.max(1, Math.round(words / 200))} মিনিট পড়ার সময়</>}
           </p>
         </div>
