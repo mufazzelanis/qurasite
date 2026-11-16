@@ -1,12 +1,23 @@
 import { NextResponse } from "next/server";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
+import { apiAdmin } from "@/lib/session";
 
 /**
  * Image upload → /public/uploads. Works on a VPS / local server.
  * On Vercel (read-only disk) use an image URL (Cloudinary, ImgBB, S3...) instead.
  */
 export async function POST(req: Request) {
+  // images are uploaded from product, category, page, landing and site editors
+  const g = await apiAdmin([
+    ["products", "create"],
+    ["products", "edit"],
+    ["landing", "create"],
+    ["landing", "edit"],
+    ["mainsite", "edit"],
+    ["marketing", "edit"],
+  ]);
+  if (g.error) return g.error;
   const fd = await req.formData();
   const file = fd.get("file");
   if (!(file instanceof File)) return NextResponse.json({ error: "No file" }, { status: 400 });

@@ -1,18 +1,15 @@
 "use client";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Check, Copy, Crown, Eye, EyeOff, KeyRound, Loader2, Shield, UserRound, Wand2, X } from "lucide-react";
+import { Check, Copy, Crown, Eye, EyeOff, KeyRound, Loader2, UserRound, Wand2, X } from "lucide-react";
 import { toast } from "sonner";
 import { saveUser } from "@/app/admin/actions";
-import { ROLE_INFO, SECTION_INFO, SECTIONS, STAFF_TEMPLATES, type Section } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { Toggle } from "./fields";
+import { permissionSummary, roleStyle } from "./roleStyle";
+import type { RoleRow } from "./RolesManager";
 
-type Role = "ADMIN" | "MANAGER" | "STAFF";
-type EditUser = { id: string; name: string; email: string; phone: string | null; note: string | null; role: Role; permissions: string[]; active: boolean; passwordChangedAt: string | null };
-
-const STAFF_SECTIONS = (Object.keys(SECTIONS) as Section[]).filter((s) => s !== "dashboard" && s !== "system");
-const ROLE_ICON = { ADMIN: Crown, MANAGER: Shield, STAFF: UserRound } as const;
+type EditUser = { id: string; name: string; email: string; phone: string | null; note: string | null; role: string; roleId: string | null; active: boolean; passwordChangedAt: string | null };
 
 export function generatePassword(len = 14) {
   const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789", "@#$%&*!?"];
@@ -37,10 +34,23 @@ function strength(pw: string) {
 }
 
 /** Slide-over panel to create or edit a user */
-export default function UserEditor({ user, isMe, onClose, onCreated }: { user: EditUser | null; isMe: boolean; onClose: () => void; onCreated: (c: { name: string; email: string; password: string }) => void }) {
+export default function UserEditor({
+  user,
+  isMe,
+  roles,
+  me,
+  onClose,
+  onCreated,
+}: {
+  user: EditUser | null;
+  isMe: boolean;
+  roles: RoleRow[];
+  me: { superAdmin: boolean; permissions: string[] };
+  onClose: () => void;
+  onCreated: (c: { name: string; email: string; password: string }) => void;
+}) {
   const [state, action] = useActionState(saveUser, null);
-  const [role, setRole] = useState<Role>(user?.role ?? "STAFF");
-  const [perms, setPerms] = useState<Set<string>>(new Set(user?.permissions.length ? user.permissions : ["orders", "customers"]));
+  const [roleKey, setRoleKey] = useState<string>(user ? (user.role === "ADMIN" ? "super" : (user.roleId ?? "")) : (roles.find((r) => r.name === "Call Center")?.id ?? roles[0]?.id ?? ""));
   const [active, setActive] = useState(user?.active ?? true);
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(!user);
@@ -72,13 +82,6 @@ export default function UserEditor({ user, isMe, onClose, onCreated }: { user: E
     };
   }, [onClose]);
 
-  const togglePerm = (s: string) => setPerms((p) => {
-    const n = new Set(p);
-    if (n.has(s)) n.delete(s);
-    else n.add(s);
-    return n;
-  });
-  const templateOn = (t: (typeof STAFF_TEMPLATES)[number]) => t.sections.length === perms.size && t.sections.every((s) => perms.has(s));
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={user ? "Edit user" : "Add user"}>
@@ -94,9 +97,8 @@ export default function UserEditor({ user, isMe, onClose, onCreated }: { user: E
       >
         <style>{`@keyframes slideIn{from{transform:translateX(100%)}to{transform:none}}@keyframes fadeIn{from{opacity:0}to{opacity:1}}`}</style>
         <input type="hidden" name="id" value={user?.id ?? ""} />
-        <input type="hidden" name="role" value={role} />
+        <input type="hidden" name="roleId" value={roleKey} />
         {active && <input type="hidden" name="active" value="on" />}
-        {role === "STAFF" && [...perms].map((p) => <input key={p} type="hidden" name="permissions" value={p} />)}
 
         {/* header */}
         <header className="flex items-center gap-3 border-b border-zinc-200 bg-white px-6 py-4">
@@ -133,77 +135,46 @@ export default function UserEditor({ user, isMe, onClose, onCreated }: { user: E
           </Block>
 
           {/* role */}
-          <Block title="Role">
-            <div className="grid gap-2 sm:grid-cols-3">
-              {(Object.keys(ROLE_INFO) as Role[]).map((r) => {
-                const Icon = ROLE_ICON[r];
-                const on = role === r;
-                const locked = isMe && r !== "ADMIN";
+          <Block title="Role" hint="Permissions come from the role — edit them in the Roles tab">
+            <div className="space-y-2">
+              {[{ id: "super", name: "Super Admin", description: "Full access to everything, including users and roles.", color: "brand", permissions: [] as string[], users: 0 }, ...roles].map((r) => {
+                const isSuper = r.id === "super";
+                const on = roleKey === r.id;
+                const locked = (isMe && me.superAdmin && !isSuper) || (isSuper && !me.superAdmin) || (!isSuper && !me.superAdmin && r.permissions.some((p) => !me.permissions.includes(p)));
+                const summary = isSuper ? [] : permissionSummary(r.permissions).filter((x) => x.section !== "dashboard");
                 return (
                   <button
-                    key={r}
+                    key={r.id}
                     type="button"
                     disabled={locked}
-                    onClick={() => setRole(r)}
-                    title={locked ? "You cannot remove your own admin role" : undefined}
-                    className={cn(
-                      "relative rounded-2xl border-2 p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-40",
-                      on ? "border-brand-700 bg-brand-50/70 shadow-sm" : "border-zinc-200 bg-white hover:border-zinc-300",
-                    )}
+                    onClick={() => setRoleKey(r.id)}
+                    title={locked ? (isMe ? "You cannot remove your own Super Admin access" : "You can only assign roles whose permissions you have yourself") : undefined}
+                    className={cn("relative flex w-full items-start gap-3 rounded-2xl border-2 p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-40", on ? "border-brand-700 bg-brand-50/60 shadow-sm" : "border-zinc-200 bg-white hover:border-zinc-300")}
                   >
+                    <span className={cn("grid size-9 shrink-0 place-items-center rounded-xl text-xs font-bold ring-1", roleStyle(r.color).badge)}>{isSuper ? <Crown className="size-4" /> : r.name.slice(0, 2).toUpperCase()}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold">{r.name}</span>
+                      {r.description && <span className="block text-xs leading-snug text-zinc-500">{r.description}</span>}
+                      {on && summary.length > 0 && (
+                        <span className="mt-2 flex flex-wrap gap-1">
+                          {summary.map((x) => (
+                            <span key={x.section} className="rounded-md bg-white px-1.5 py-0.5 text-[11px] text-zinc-600 ring-1 ring-zinc-200">
+                              <b className="font-semibold">{x.label}</b> · {x.full ? "full" : x.text.toLowerCase()}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
                     {on && (
-                      <span className="absolute top-2.5 right-2.5 grid size-5 place-items-center rounded-full bg-brand-700 text-white">
+                      <span className="grid size-5 shrink-0 place-items-center rounded-full bg-brand-700 text-white">
                         <Check className="size-3" strokeWidth={3} />
                       </span>
                     )}
-                    <Icon className={cn("size-5", on ? "text-brand-700" : "text-zinc-400")} />
-                    <p className="mt-2 text-sm font-semibold">{ROLE_INFO[r].label}</p>
-                    <p className="mt-0.5 text-xs leading-snug text-zinc-500">{ROLE_INFO[r].desc}</p>
                   </button>
                 );
               })}
+              {!roles.length && <p className="text-xs text-zinc-500">No custom roles yet — create one in the Roles tab.</p>}
             </div>
-
-            {role === "STAFF" && (
-              <div className="space-y-3 rounded-2xl bg-white p-4 ring-1 ring-zinc-200">
-                <div>
-                  <p className="mb-2 text-xs font-semibold tracking-wide text-zinc-400 uppercase">Quick templates</p>
-                  <div className="flex flex-wrap gap-2">
-                    {STAFF_TEMPLATES.map((t) => (
-                      <button
-                        key={t.name}
-                        type="button"
-                        onClick={() => setPerms(new Set(t.sections))}
-                        className={cn("rounded-full px-3 py-1.5 text-xs font-semibold ring-1 transition", templateOn(t) ? "bg-brand-800 text-white ring-brand-800" : "bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50")}
-                      >
-                        {t.emoji} {t.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {STAFF_SECTIONS.map((s) => {
-                    const on = perms.has(s);
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => togglePerm(s)}
-                        aria-pressed={on}
-                        className={cn("flex items-start gap-2.5 rounded-xl border p-2.5 text-left transition", on ? "border-brand-600 bg-brand-50/60" : "border-zinc-200 hover:bg-zinc-50")}
-                      >
-                        <span className={cn("mt-0.5 grid size-4 shrink-0 place-items-center rounded border", on ? "border-brand-700 bg-brand-700 text-white" : "border-zinc-300 bg-white")}>{on && <Check className="size-3" strokeWidth={3} />}</span>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium leading-tight">{SECTIONS[s]}</span>
-                          <span className="block text-[11px] leading-snug text-zinc-500">{SECTION_INFO[s]}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-zinc-400">Dashboard is always included. System settings are only for admins.</p>
-              </div>
-            )}
           </Block>
 
           {/* password */}
@@ -271,7 +242,7 @@ export default function UserEditor({ user, isMe, onClose, onCreated }: { user: E
         {/* footer */}
         <footer className="flex items-center justify-between gap-3 border-t border-zinc-200 bg-white px-6 py-4">
           <p className="truncate text-xs text-zinc-500">
-            {role === "STAFF" ? `${perms.size} section${perms.size === 1 ? "" : "s"} + dashboard` : ROLE_INFO[role].desc}
+            {roleKey === "super" ? "Super Admin — full access" : `Role: ${roles.find((r) => r.id === roleKey)?.name ?? "— choose a role —"}`}
           </p>
           <div className="flex shrink-0 gap-2">
             <button type="button" onClick={onClose} className="a-btn-light !rounded-xl">

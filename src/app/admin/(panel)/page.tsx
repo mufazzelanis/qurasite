@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Boxes, Clock, PackageCheck, RefreshCcw, ShoppingBag, Target, Users, Wallet } from "lucide-react";
 import { dashboardData } from "@/lib/dashboard";
+import { ACTION_LABEL, MODULES, type Action, type Section } from "@/lib/permissions";
 import { getRange, pctChange } from "@/lib/periods";
 import { db } from "@/lib/db";
 import { DELIVERY_LABELS, STATUS_META, cn, taka } from "@/lib/utils";
@@ -40,7 +41,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
   return (
     <div className="space-y-6">
-      {sp.denied && <p className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">You don&apos;t have permission to open that section.</p>}
+      {sp.denied && <DeniedNotice code={sp.denied} />}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -203,6 +204,23 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             {!d.byArea.length && <p className="text-sm text-zinc-400">No orders yet</p>}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** "/admin?denied=products.delete" → readable message */
+function DeniedNotice({ code }: { code: string }) {
+  const [mod, act = "view"] = code.split(".");
+  const m = MODULES[mod as Section];
+  return (
+    <div className="flex items-start gap-3 rounded-2xl bg-rose-50 p-4 text-sm text-rose-800 ring-1 ring-rose-100">
+      <span className="text-lg leading-none">🔒</span>
+      <div>
+        <p className="font-semibold">
+          No permission: {m?.label ?? mod} → {ACTION_LABEL[act as Action] ?? act}
+        </p>
+        <p className="text-rose-700/80">Your role doesn&apos;t allow this. Ask a Super Admin to add the permission in Users &amp; Roles → Roles.</p>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { DEFAULT_LANDING_CONTENT } from "../src/lib/settings-defaults";
+import { DEFAULT_ROLES } from "../src/lib/permissions";
 
 const db = new PrismaClient();
 
@@ -13,6 +14,9 @@ async function main() {
     create: { email, name: "Qura Admin", password: await bcrypt.hash(process.env.ADMIN_PASSWORD || "ChangeMe@123", 10), role: "ADMIN" },
   });
   console.log(`✔ Admin: ${email}`);
+
+  for (const r of DEFAULT_ROLES) await db.adminRole.upsert({ where: { name: r.name }, update: {}, create: r });
+  console.log(`✔ ${DEFAULT_ROLES.length} default roles`);
 
   const cats = [
     { slug: "qura-mix", name: "Qura Mix", nameBn: "কুঁড়া মিক্স", sortOrder: 1 },

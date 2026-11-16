@@ -208,6 +208,8 @@ export type AllSettings = {
 
 /** Per landing page content (stored in LandingPage.content) */
 export type LandingContent = {
+  /** landing design key — see lib/landing-designs.ts */
+  design: string;
   heroImage: string;
   videoUrl: string;
   primary: string; // theme color
@@ -402,6 +404,7 @@ export const DEFAULT_SETTINGS: AllSettings = {
 };
 
 export const DEFAULT_LANDING_CONTENT: LandingContent = {
+  design: "classic",
   heroImage: "/brand/logo-card-t.png",
   videoUrl: "",
   primary: "#0d4524",
@@ -437,6 +440,6 @@ export function mergeLandingContent(raw: unknown): LandingContent {
 }
 
 export const RESERVED_SLUGS = new Set([
-  "admin", "api", "shop", "cart", "checkout", "track", "order", "p", "category", "guide", "search",
+  "admin", "api", "preview", "shop", "cart", "checkout", "track", "order", "p", "category", "guide", "search",
   "login", "account", "_next", "brand", "uploads", "icon.png", "favicon.ico", "robots.txt", "sitemap.xml",
 ]);

@@ -15,7 +15,7 @@ import LiveNotifier from "./LiveNotifier";
 type Item = { href: string; label: string; icon: typeof Gauge; section: Section; badge?: number };
 type Group = { title: string; items: Item[] };
 
-export default function AdminShell({ admin, pending, children }: { admin: { name: string; email: string; role: string; permissions: string[] }; pending: number; children: React.ReactNode }) {
+export default function AdminShell({ admin, pending, children }: { admin: { name: string; email: string; role: string; permissions: string[]; roleName: string }; pending: number; children: React.ReactNode }) {
   const path = usePathname();
   const [mobile, setMobile] = useState(false);
   const [mini, setMini] = useState(false);
@@ -85,7 +85,7 @@ export default function AdminShell({ admin, pending, children }: { admin: { name
           { href: "/admin/sms", label: "Email, SMS & OTP", icon: Bell, section: "system" },
           { href: "/admin/invoice", label: "Invoice Settings", icon: Printer, section: "system" },
           { href: "/admin/pixel", label: "Facebook Pixel", icon: Gauge, section: "system" },
-          { href: "/admin/users", label: "Users & Roles", icon: UserCog, section: "system" },
+          { href: "/admin/users", label: "Users & Roles", icon: UserCog, section: "users" },
           { href: "/admin/activity", label: "Activity Log", icon: Receipt, section: "system" },
           { href: "/admin/settings", label: "General Settings", icon: Settings, section: "system" },
         ],
@@ -215,7 +215,7 @@ export default function AdminShell({ admin, pending, children }: { admin: { name
             <LiveNotifier />
             <div className="text-right text-sm">
               <p className="font-semibold leading-tight">{admin.name}</p>
-              <p className="text-xs text-zinc-500">{admin.role === "ADMIN" ? "Super Admin" : admin.role === "MANAGER" ? "Manager" : "Staff"}</p>
+              <p className="text-xs text-zinc-500">{admin.roleName}</p>
             </div>
             <span className="grid size-9 place-items-center rounded-full bg-brand-700 text-sm font-bold text-white">{admin.name[0]}</span>
           </div>

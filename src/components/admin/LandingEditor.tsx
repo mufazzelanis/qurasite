@@ -8,6 +8,8 @@ import type { LandingContent } from "@/lib/settings-defaults";
 import { cn, taka } from "@/lib/utils";
 import { AreaF, ImageField, ListEditor, SaveBar, TextF, Toggle } from "./fields";
 import PixelPicker, { type LibPixel, type PixelMode } from "./PixelPicker";
+import DesignMock from "./DesignMock";
+import { LANDING_DESIGNS } from "@/lib/landing-designs";
 
 type P = { id: string; name: string; nameBn: string | null; price: number; image: string; isAddon: boolean; active: boolean };
 type LP = { id: string; slug: string; title: string; active: boolean; productId: string; extraIds: string[]; addonIds: string[]; pixelMode: string; pixelIds: string[]; seoTitle: string | null; seoDesc: string | null; content: LandingContent };
@@ -105,6 +107,31 @@ export default function LandingEditor({ lp, products, siteUrl, pixels }: { lp: L
 
       {tab === "Design & sections" && (
         <div className="space-y-4">
+          <div className="a-card space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-semibold">Design</h3>
+                <p className="text-xs text-zinc-500">The whole page changes look — texts, products and settings stay the same.</p>
+              </div>
+              <a href={`/preview/${lp.slug}?design=${c.design}`} target="_blank" className="a-btn-light !rounded-xl !py-1.5">
+                <ExternalLink className="size-4" /> Preview this design
+              </a>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {LANDING_DESIGNS.map((d) => (
+                <button
+                  key={d.key}
+                  type="button"
+                  onClick={() => setV((p) => ({ ...p, content: { ...p.content, design: d.key, primary: d.primary, accent: d.accent } }))}
+                  className={cn("overflow-hidden rounded-2xl border-2 text-left transition", c.design === d.key ? "border-brand-700 shadow-md" : "border-zinc-200 hover:border-zinc-300")}
+                >
+                  <DesignMock d={d} image={c.heroImage || undefined} />
+                  <p className="px-2.5 pt-2 text-sm font-semibold">{d.name}</p>
+                  <p className="px-2.5 pb-2 text-[11px] text-zinc-500">{d.tagline}</p>
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="a-card grid gap-4 sm:grid-cols-2">
             <ImageField label="Hero image" value={c.heroImage} onChange={(x) => setC("heroImage", x)} />
             <TextF label="YouTube video (optional)" value={c.videoUrl} onChange={(x) => setC("videoUrl", x)} help="Loads only when tapped — keeps the page fast" />

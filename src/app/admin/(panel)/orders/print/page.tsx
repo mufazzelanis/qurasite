@@ -7,7 +7,7 @@ import PrintButton from "@/components/admin/PrintButton";
 
 /** One or many invoices — each prints on its own page */
 export default async function PrintInvoices({ searchParams }: { searchParams: Promise<{ ids?: string }> }) {
-  await requireAdmin("orders");
+  await requireAdmin("orders", "export");
   const ids = ((await searchParams).ids || "").split(",").filter(Boolean).slice(0, 200);
   const [orders, site, inv] = await Promise.all([
     db.order.findMany({ where: { id: { in: ids } }, include: { items: true }, orderBy: { createdAt: "asc" } }),

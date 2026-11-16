@@ -1,9 +1,12 @@
 import { db } from "@/lib/db";
 import { orderWhere } from "@/lib/order-filters";
+import { apiAdmin } from "@/lib/session";
 
 /** CSV export of orders (respects the same filters as the Orders page). Works with courier bulk upload. */
 export async function GET(req: Request) {
-  const sp = Object.fromEntries(new URL(req.url).searchParams);
+  const g = await apiAdmin(["orders", "export"]);
+  if (g.error) return g.error;
+  const sp =Object.fromEntries(new URL(req.url).searchParams);
   const orders = await db.order.findMany({ where: orderWhere(sp), orderBy: { createdAt: "desc" }, include: { items: true }, take: 5000 });
 
   const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;

@@ -53,6 +53,21 @@ model Admin {
   lockedUntil    DateTime?
   passwordChangedAt DateTime?
   logins      LoginEvent[]
+  /// Custom role (ignored for Super Admin = role ADMIN)
+  roleId      String?
+  adminRole   AdminRole? @relation(fields: [roleId], references: [id], onDelete: SetNull)
+}
+
+/// Custom role with fine-grained permissions like "orders.edit", "products.delete"
+model AdminRole {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String   @default("emerald")
+  permissions String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  admins      Admin[]
 }
 
 /// Every admin sign-in attempt (success or failure)

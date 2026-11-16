@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { bdStartOfDay } from "@/lib/periods";
+import { apiAdmin } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 const ACTIVE_MS = 40_000;
 
 export async function GET(req: Request) {
+  // live counter is shown in every admin's top bar → any active admin
+  const g = await apiAdmin(["dashboard", "view"]);
+  if (g.error) return g.error;
   const scope = new URL(req.url).searchParams.get("scope") || "landing"; // landing | all
   const now = Date.now();
   const activeSince = new Date(now - ACTIVE_MS);
